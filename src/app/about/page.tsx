@@ -1,0 +1,66 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
+export const metadata: Metadata = {
+  title: 'About — analysis, not advice',
+  description:
+    'What Glass Pitch is, how the probabilities are produced, and why we publish a permanent, losses-visible track record instead of asserting one.',
+  alternates: { canonical: '/about' },
+};
+
+export default function AboutPage() {
+  return (
+    <article className="space-y-6">
+      <h1 className="text-2xl font-bold tracking-tight">About Glass Pitch</h1>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">What this is</h2>
+        <p className="text-black/70 dark:text-white/70">
+          Glass Pitch is a free, mobile-first football <strong>analysis</strong>{' '}
+          site. For each match we show home/draw/away probabilities, a predicted
+          score, recent form, and a short plain-language read of the matchup.
+          This is analysis and probability — not a guarantee, and not regulated
+          betting advice.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Methodology</h2>
+        <p className="text-black/70 dark:text-white/70">
+          v1 probabilities come from an established third-party model, clearly
+          labelled as such on every match page. Alongside it we quietly log a
+          simple in-house Elo rating so we can compare the two over time and only
+          promote our own model if it earns its place on the scored record.
+          Predictions are scored with proper scoring rules — the multiclass Brier
+          score and log loss — plus a calibration check.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Analysis, not advice</h2>
+        <p className="text-black/70 dark:text-white/70">
+          Most tipster sites hide their losses and make claims you cannot verify.
+          We do the opposite: every prediction is locked at kickoff and recorded
+          in a permanent public{' '}
+          <Link href="/ledger" className="underline">
+            ledger
+          </Link>
+          , wins and losses alike. We never present a prediction as a guaranteed
+          tip, never imply it solves money problems, and never claim an edge over
+          bookmakers.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Staying responsible</h2>
+        <p className="text-black/70 dark:text-white/70">
+          Football should stay fun. If betting stops being fun, please see our{' '}
+          <Link href="/responsible-gambling" className="underline">
+            responsible gambling
+          </Link>{' '}
+          page. 18+.
+        </p>
+      </section>
+    </article>
+  );
+}

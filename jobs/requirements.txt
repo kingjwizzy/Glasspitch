@@ -1,0 +1,6 @@
+# Glass Pitch — Python scheduled jobs (runtime dependencies).
+# These jobs are the ONLY writers to the database and the ONLY callers of the
+# football API (ARCHITECTURE.md §5, §6). Secrets are read from the environment.
+supabase>=2.4,<3
+requests>=2.31,<3
+python-dotenv>=1.0,<2
