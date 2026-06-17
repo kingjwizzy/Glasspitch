@@ -114,12 +114,14 @@ flowchart TD
 
 | Layer | Choice | Why |
 |---|---|---|
-| Web app | **Next.js (App Router) + TypeScript + Tailwind** | Best-in-class server rendering for SEO (the growth engine), strong Claude Code support, large ecosystem |
+| Web app | **Next.js (App Router) + TypeScript + Tailwind**, plus **shadcn/ui** for accessible interactive primitives (scoped — see note below) | Best-in-class server rendering for SEO (the growth engine), strong Claude Code support, large ecosystem |
 | Hosting | **Vercel** (free tier) | Zero-config Next.js deploys, CDN, preview deploys; fits the budget |
 | Database | **Supabase Postgres** (free tier) | Managed Postgres, Row Level Security, generous free tier, manageable by Claude Code via the Supabase MCP |
 | Jobs / model / scoring | **Python** (scheduled) | Where you're comfortable and where the scoring maths must be hand-verified; runs as cron (Vercel Cron, GitHub Actions, or Supabase scheduled functions) |
 | Errors | **Sentry** | Catches runtime errors early |
 | Analytics | **Plausible** (or GA4) | Lightweight, privacy-friendly; no cookie banner if cookieless |
+
+**UI components — shadcn/ui, scoped (decided 2026-06-18).** shadcn/ui (Radix + Tailwind, copy-in — components live in our repo, not a runtime dependency) is the sanctioned source for **accessible interactive primitives only**: Dialog, Dropdown, Popover, Tabs, Combobox, Toast, and similar. Presentational / content components (MatchCard, ProbabilityBar, tables, badges) stay **hand-built RSC + Tailwind** to honour DESIGN.md's "ship minimal client JS" goal. Every shadcn component is restyled to the DESIGN.md tokens — never its default theme. Rationale: Radix owns the hard accessibility (focus management, ARIA, keyboard nav) so it doesn't rot in bespoke code, while scoping it to interactive bits keeps the static, SEO-driven surface zero-client-JS.
 
 **Key decoupling:** the Python layer and the web layer meet **only at the database**. That means the web-framework choice is far less locking than it looks, and you keep the maths in Python regardless. If you later prefer an all-Python web layer (Django + HTMX), the data layer is unaffected.
 
@@ -158,7 +160,7 @@ Tables (Postgres). Times are `timestamptz` in UTC.
 **Integrity rules [VERIFY YOURSELF]**
 - A `CHECK` that `prob_home + prob_draw + prob_away` is within a small epsilon of 1.0.
 - A **trigger** that rejects any `UPDATE` to `prob_*`, `predicted_*`, `model_version`, `source`, or `published_at` once `locked_at <= now()`. Scoring fields (`final_*`, `result`, `brier_score`, `log_loss`, `scored_at`, `status`) may still be written by the scoring job.
-- **Row Level Security:** the public/anon role is **read-only**; only the service role (used by the Python jobs) may write. The website uses the anon key; the jobs use the service-role key (kept server-side only).
+- **Row Level Security:** the public/anon role is **read-only**; only the service role (used by the Python jobs via the secret key) may write. The website uses the **publishable key** (`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `sb_publishable_…`); the jobs use the **secret key** (`SUPABASE_SECRET_KEY`, `sb_secret_…`, kept server-side only).
 
 ---
 
@@ -244,7 +246,7 @@ For one match with predicted probabilities `p_home, p_draw, p_away` and the actu
 - **Mobile-first:** designed for phones first; Tailwind responsive utilities.
 - **SEO:** SSR/SSG/ISR, semantic HTML, fast Core Web Vitals, sitemap, per-page metadata.
 - **Performance:** served from CDN + DB cache; no blocking third-party calls on the request path.
-- **Security [VERIFY YOURSELF]:** secrets only in environment variables (Supabase service-role key and API-Football key **never** in the client bundle or the repo); RLS read-only for the public role; `.env*` git-ignored.
+- **Security [VERIFY YOURSELF]:** secrets only in environment variables (Supabase **secret key** `SUPABASE_SECRET_KEY` and API-Football key **never** in the client bundle or the repo); RLS read-only for the public role; `.env*` git-ignored.
 - **Monitoring:** Sentry on web and jobs.
 - **Analytics:** Plausible (cookieless → no cookie banner needed) or GA4.
 - **Accessibility:** sufficient colour contrast, keyboard navigation, alt text, sensible headings.
