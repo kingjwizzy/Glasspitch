@@ -74,8 +74,8 @@ Other scripts: `npm run build`, `npm run start`, `npm run lint`.
 | Variable | Public? | What it is |
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | public | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Supabase anon key (read-only via RLS) |
-| `SUPABASE_SERVICE_ROLE_KEY` | **secret** | Service-role key (server-only; bypasses RLS) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | public | Supabase publishable key, `sb_publishable_…` (read-only via RLS) |
+| `SUPABASE_SECRET_KEY` | **secret** | Supabase secret key, `sb_secret_…` (server-only; bypasses RLS) |
 | `API_FOOTBALL_KEY` | **secret** | API-Football key |
 | `NEXT_PUBLIC_SITE_URL` | public | Deployed base URL (metadata/OG/sitemap) |
 
