@@ -43,7 +43,7 @@ export default function ResponsibleGamblingPage() {
           </li>
           <li>GambleAware — information and support — to be confirmed.</li>
         </ul>
-        <p className="text-xs text-black/50 dark:text-white/50">
+        <p className="text-xs text-black/60 dark:text-white/60">
           Links are intentionally left to be verified against current official
           guidance before launch.
         </p>
