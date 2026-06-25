@@ -116,3 +116,32 @@ def predicted_scoreline(
     home_goals = round(total_goals * expected_home)
     away_goals = round(total_goals * (1.0 - expected_home))
     return (int(home_goals), int(away_goals))
+
+
+def ratings_from_results(
+    results,
+    *,
+    default: float = DEFAULT_RATING,
+    k: float = K_FACTOR,
+    home_advantage: float = HOME_ADVANTAGE,
+) -> dict:
+    """Derive current team ratings by replaying finished matches in order.
+
+    ``results`` is an iterable of ``(home_team_id, away_team_id, home_goals,
+    away_goals)`` in chronological (kickoff) order. Returns a dict
+    ``team_id -> rating``. Teams not yet seen start at ``default`` — this is the
+    "cold-start from a default rating" the in-house Elo uses while it is
+    logged-only (ARCHITECTURE.md §9). No separate ratings table is required:
+    ratings are recomputed from the fixtures history each run.
+    """
+    ratings: dict = {}
+    for home_id, away_id, home_goals, away_goals in results:
+        home_rating = ratings.get(home_id, default)
+        away_rating = ratings.get(away_id, default)
+        new_home, new_away = update_ratings(
+            home_rating, away_rating, home_goals, away_goals,
+            k=k, home_advantage=home_advantage,
+        )
+        ratings[home_id] = new_home
+        ratings[away_id] = new_away
+    return ratings

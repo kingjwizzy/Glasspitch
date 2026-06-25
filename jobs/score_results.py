@@ -1,63 +1,78 @@
-"""Frequent job around match end: score finished fixtures (ARCHITECTURE.md §8, §10).
+"""Frequent job around match end: score finished fixtures (ARCHITECTURE.md §8.4, §10).
 
-The fetch/DB plumbing is a STUB for the next session, but the scoring maths it
-calls is fully implemented in ``scoring.py`` and wired here in
-``score_prediction()`` (which is pure and unit-testable today).
-
-Intended behaviour, for each fixture that is finished and whose locked prediction
-is not yet scored:
-  1. Copy ``final_home_goals`` / ``final_away_goals`` from the fixture.
-  2. ``result = scoring.result_from_goals(home, away)``.
-  3. ``brier_score`` / ``log_loss`` via ``scoring`` (Section 10).
-  4. Set ``status='scored'`` and ``scored_at=now()``.
-  5. Update Elo ratings from the result (``elo.update_ratings``) for future
-     predictions (§9).
-
-Only the scoring fields are written post-lock; the §7 trigger rejects any change
-to the prediction itself.
+For each finished fixture, take its locked, not-yet-scored predictions, copy the
+final score, set the result (home/draw/away), compute brier_score and log_loss
+via scoring.py, and set status='scored'. Idempotent: predictions already
+'scored' are skipped. The in-house Elo ratings are not stored here;
+fetch_predictions re-derives them from the fixtures history on its next run (§9).
 """
 
 from __future__ import annotations
 
-import elo  # noqa: F401  (used once the Elo-rating store is wired in)
-import scoring
-from db import get_client  # noqa: F401  (used once implemented)
+import logging
+from typing import Optional
+
+from jobs import scoring, util
+from jobs.cli import main
+from jobs.db import SupabaseStore
+
+log = logging.getLogger(__name__)
 
 
-def score_prediction(
-    prob_home: float,
-    prob_draw: float,
-    prob_away: float,
-    final_home_goals: int,
-    final_away_goals: int,
-) -> dict:
-    """Compute the scoring fields for one finished prediction.
+def run(*, dry_run: bool = False, store: Optional[SupabaseStore] = None, now=None) -> dict:
+    store = store if store is not None else SupabaseStore()
+    scored_at = (now or util.now_utc()).isoformat()
 
-    Pure and unit-testable now; the fetch/DB plumbing around it is the stub.
-    Returns the column values the scoring job will write to the ledger.
-    """
-    result = scoring.result_from_goals(final_home_goals, final_away_goals)
-    return {
-        "final_home_goals": final_home_goals,
-        "final_away_goals": final_away_goals,
-        "result": result,
-        "brier_score": scoring.brier_score(
-            prob_home, prob_draw, prob_away, result
-        ),
-        "log_loss": scoring.log_loss(prob_home, prob_draw, prob_away, result),
-        "status": "scored",
+    finished = store.finished_fixtures_ordered()
+    counts = {
+        "finished": len(finished),
+        "predictions_scored": 0,
+        "skipped_no_score": 0,
     }
 
+    for fixture in finished:
+        final_home = fixture.get("final_home_goals")
+        final_away = fixture.get("final_away_goals")
+        if final_home is None or final_away is None:
+            counts["skipped_no_score"] += 1
+            log.info(
+                "Fixture %s is finished but missing a final score; skipping.",
+                fixture["id"],
+            )
+            continue
 
-def run() -> None:
-    # TODO(ARCHITECTURE.md §8, §10): detect finished fixtures, load their locked
-    # predictions, call score_prediction(), write the scoring fields via
-    # get_client(), and update Elo ratings.
-    raise NotImplementedError(
-        "score_results: implement finished-fixture detection + DB writes (§8, §10). "
-        "The scoring maths is ready in scoring.py / this module's score_prediction()."
-    )
+        result = scoring.result_from_goals(final_home, final_away)
+
+        for pred in store.locked_unscored_predictions(fixture["id"]):
+            brier = scoring.brier_score(
+                pred["prob_home"], pred["prob_draw"], pred["prob_away"], result
+            )
+            loss = scoring.log_loss(
+                pred["prob_home"], pred["prob_draw"], pred["prob_away"], result
+            )
+            counts["predictions_scored"] += 1
+            if dry_run:
+                log.info(
+                    "[dry-run] would score prediction %s (%s) for fixture %s: "
+                    "result=%s brier=%.4f log_loss=%.4f",
+                    pred["id"], pred["model_version"], fixture["id"], result, brier, loss,
+                )
+            else:
+                store.write_prediction_score(
+                    pred["id"],
+                    final_home_goals=final_home,
+                    final_away_goals=final_away,
+                    result=result,
+                    brier_score=brier,
+                    log_loss=loss,
+                    scored_at=scored_at,
+                )
+
+    # The in-house Elo ratings are not stored here. fetch_predictions re-derives
+    # them from the fixtures history on its next run (§9); now that these results
+    # are stored they will be picked up automatically (no ratings table yet).
+    return counts
 
 
 if __name__ == "__main__":
-    run()
+    main(run, "Score results")

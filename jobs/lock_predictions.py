@@ -1,29 +1,54 @@
-"""Frequent job: lock predictions at kickoff; void any unlocked (ARCHITECTURE.md §8, §10).
+"""Frequent job: lock predictions at kickoff; void late ones (ARCHITECTURE.md §8.3, §10).
 
-STUB — the DB logic is left for the next session.
-
-Intended behaviour (run every ~10-15 min):
-  * For predictions with ``locked_at <= now()`` and ``status='published'``, set
-    ``status='locked'``. From that moment the §7 immutability trigger makes
-    prob_*/predicted_*/model_version/source/published_at immutable.
-  * Any fixture that kicked off WITHOUT a published prediction is recorded as
-    ``status='unlocked_void'`` and EXCLUDED from the scored record — integrity
-    over coverage (§5, §10).
+For every published prediction whose locked_at (= kickoff) has passed:
+  * if it was published before kickoff, set status='locked' (the §7 trigger then
+    makes the prediction immutable);
+  * if it was published AFTER kickoff (never a valid pre-kickoff prediction),
+    set status='unlocked_void' so it is excluded from the scored record —
+    integrity over coverage (§5, §10).
 """
 
 from __future__ import annotations
 
-from db import get_client  # noqa: F401  (used once implemented)
+import logging
+from typing import Optional
+
+from jobs import util
+from jobs.cli import main
+from jobs.db import SupabaseStore
+
+log = logging.getLogger(__name__)
 
 
-def run() -> None:
-    # TODO(ARCHITECTURE.md §8, §10): implement the kickoff lock transition and the
-    # unlocked_void marking, writing via get_client().
-    raise NotImplementedError(
-        "lock_predictions: implement kickoff lock + unlocked_void (§8, §10). "
-        "Next session."
-    )
+def run(*, dry_run: bool = False, store: Optional[SupabaseStore] = None, now=None) -> dict:
+    store = store if store is not None else SupabaseStore()
+    now = now or util.now_utc()
+
+    due = store.published_predictions_due(now.isoformat())
+    counts = {"due": len(due), "locked": 0, "voided": 0}
+
+    for pred in due:
+        published_at = util.parse_iso(pred["published_at"])
+        locked_at = util.parse_iso(pred["locked_at"])
+        valid = published_at <= locked_at
+        if valid:
+            counts["locked"] += 1
+            if dry_run:
+                log.info("[dry-run] would lock prediction %s.", pred["id"])
+            else:
+                store.mark_locked(pred["id"])
+        else:
+            counts["voided"] += 1
+            log.warning(
+                "Prediction %s was published (%s) after kickoff (%s); marking "
+                "unlocked_void.",
+                pred["id"], pred["published_at"], pred["locked_at"],
+            )
+            if not dry_run:
+                store.mark_unlocked_void(pred["id"])
+
+    return counts
 
 
 if __name__ == "__main__":
-    run()
+    main(run, "Lock predictions")

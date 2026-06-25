@@ -8,7 +8,7 @@ import math
 
 import pytest
 
-from scoring import (
+from jobs.scoring import (
     LOG_LOSS_EPSILON,
     OUTCOMES,
     PROB_SUM_TOLERANCE,

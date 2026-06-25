@@ -2,7 +2,7 @@
 
 import pytest
 
-from elo import (
+from jobs.elo import (
     DEFAULT_RATING,
     DRAW_MAX,
     HOME_ADVANTAGE,
@@ -10,6 +10,7 @@ from elo import (
     expected_score,
     match_probabilities,
     predicted_scoreline,
+    ratings_from_results,
     update_ratings,
 )
 
@@ -96,3 +97,26 @@ def test_match_probabilities_exact_even_match_no_home_advantage():
     assert probs["draw"] == pytest.approx(DRAW_MAX)
     assert probs["home"] == pytest.approx((1.0 - DRAW_MAX) / 2.0)
     assert probs["away"] == pytest.approx((1.0 - DRAW_MAX) / 2.0)
+
+
+# --- ratings_from_results (replay) -------------------------------------------
+
+
+def test_ratings_from_results_empty_is_empty():
+    assert ratings_from_results([]) == {}
+
+
+def test_ratings_from_results_cold_start_then_evolves():
+    # Team 1 beats team 2. Winner rises above default, loser falls below, and the
+    # pool total is conserved (cold-start from DEFAULT_RATING).
+    ratings = ratings_from_results([(1, 2, 3, 0)])
+    assert ratings[1] > DEFAULT_RATING
+    assert ratings[2] < DEFAULT_RATING
+    assert ratings[1] + ratings[2] == pytest.approx(2 * DEFAULT_RATING)
+
+
+def test_ratings_from_results_unseen_team_defaults():
+    ratings = ratings_from_results([(1, 2, 1, 0)])
+    assert 3 not in ratings  # a team that never played is simply absent
+    # callers fall back to DEFAULT_RATING for absent teams
+    assert ratings.get(3, DEFAULT_RATING) == DEFAULT_RATING
