@@ -9,6 +9,12 @@
 /coverage
 .pytest_cache/
 
+# --- Playwright (e2e) ---
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # --- Next.js / build ---
 /.next/
 /out/
@@ -33,6 +39,8 @@ venv/
 # --- misc ---
 .DS_Store
 *.pem
+# WSL: Windows "mark of the web" metadata streams written next to downloaded files
+*:Zone.Identifier
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
