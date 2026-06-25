@@ -1,26 +1,107 @@
 @import "tailwindcss";
 
+/* Dark-first by class (DESIGN.md §2 "dark-first"). The whole site is forced
+   into dark mode by `class="dark"` on <html> in layout.tsx; this custom variant
+   makes Tailwind's `dark:` utilities key off that class rather than the OS
+   preference, so the pages not yet re-themed keep rendering their dark variants
+   coherently. A future light theme is a token change, not a rewrite (§8). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Design tokens (DESIGN.md §2). Every value lives here once; theme the whole
+   site from these, never hardcode a colour in a component. ────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0e1311; /* page — deep floodlit-pitch charcoal, green-tinted */
+  --surface: #161d1a; /* raised cards — the "glass" layer */
+  --surface-2: #1e2723; /* higher elevation / hover */
+  --line: rgba(255, 255, 255, 0.08); /* hairline dividers */
+
+  --fg: #eaf0ec; /* primary text */
+  --fg-dim: #9da8a2; /* secondary text (AA on every surface) */
+  --fg-faint: #6b746f; /* hints — NON-essential / larger text only (sub-AA at small sizes) */
+
+  --green: #35b27a; /* brand accent, primary actions, links, "hit" */
+  --green-bright: #46c28a; /* small links / focus ring, when green dips below 4.5:1 */
+
+  /* Data — probabilities (colour-blind-safe by design, DESIGN.md §2). */
+  --home: #4c9aff; /* blue */
+  --draw: #8a938f; /* grey */
+  --away: #f2a33c; /* amber */
+
+  --miss: #f2555a; /* "miss" ✗ and live state */
+  --live: #f2555a;
+
+  /* Back-compat with the scaffold tokens still referenced by not-yet-themed
+     pages (bg-background / text-foreground). */
+  --background: var(--bg);
+  --foreground: var(--fg);
 }
 
+/* Map tokens to Tailwind theme so utilities exist: bg-bg, bg-surface,
+   text-fg, text-fg-dim, text-home, border-line, font-display, font-mono … */
 @theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+
+  --color-fg: var(--fg);
+  --color-fg-dim: var(--fg-dim);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-green: var(--green);
+  --color-green-bright: var(--green-bright);
+
+  --color-home: var(--home);
+  --color-draw: var(--draw);
+  --color-away: var(--away);
+
+  --color-miss: var(--miss);
+  --color-live: var(--live);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  /* Type roles (DESIGN.md §3): Archivo display, Hanken Grotesk body,
+     IBM Plex Mono for data. Variables are set by next/font in layout.tsx. */
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tabular figures wherever the data font is used — scorelines and percentages
+   stay aligned and never shift width (DESIGN.md §3). */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Visible keyboard focus on every interactive element (DESIGN.md §7 floor). */
+:focus-visible {
+  outline: 2px solid var(--green-bright);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Motion is deliberate and quiet, and always optional (DESIGN.md §5, §7). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

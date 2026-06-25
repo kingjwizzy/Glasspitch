@@ -1,19 +1,30 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Archivo, Hanken_Grotesk, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import DisclaimerBanner from '@/components/DisclaimerBanner';
 import { SITE_NAME, SITE_URL } from '@/lib/constants';
 
-const geistSans = Geist({
-  variable: '--font-geist-sans',
+// Three deliberate type roles (DESIGN.md §3), self-hosted via next/font with
+// `display: swap` so there is no layout shift (§8 Core Web Vitals).
+const archivo = Archivo({
+  variable: '--font-archivo',
   subsets: ['latin'],
+  display: 'swap',
 });
 
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
+const hanken = Hanken_Grotesk({
+  variable: '--font-hanken',
   subsets: ['latin'],
+  display: 'swap',
+});
+
+const plexMono = IBM_Plex_Mono({
+  variable: '--font-plex-mono',
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  display: 'swap',
 });
 
 const DEFAULT_DESCRIPTION =
@@ -54,9 +65,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${archivo.variable} ${hanken.variable} ${plexMono.variable} dark h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">
+      <body className="flex min-h-full flex-col bg-bg text-fg">
         {/* Persistent disclaimer on every page (ARCHITECTURE.md §13). */}
         <DisclaimerBanner />
         <Header />
