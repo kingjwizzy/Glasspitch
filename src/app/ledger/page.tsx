@@ -1,5 +1,17 @@
 import type { Metadata } from 'next';
-import { ANALYSIS_NOT_ADVICE } from '@/lib/constants';
+import AdSlot from '@/components/AdSlot';
+import SectionHeader from '@/components/SectionHeader';
+import LedgerTable from '@/components/ledger/LedgerTable';
+import CalibrationTable from '@/components/ledger/CalibrationTable';
+import { getLedgerData } from '@/lib/queries/ledger';
+import { pct } from '@/lib/format';
+import { ANALYSIS_NOT_ADVICE, THIRD_PARTY_LABEL } from '@/lib/constants';
+
+// SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so the record
+// refreshes as calls are scored, with no per-visitor work and — like every web
+// surface — NEVER a football-API call on the request path (§5 golden rule). The
+// page reads only from Supabase. Metadata is static, so no generateMetadata/cache.
+export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: 'Track record — the public prediction ledger',
@@ -8,44 +20,132 @@ export const metadata: Metadata = {
   alternates: { canonical: '/ledger' },
 };
 
-export default function LedgerPage() {
+function fmt(value: number | null): string {
+  return value === null ? '—' : value.toFixed(2);
+}
+
+function Metric({
+  value,
+  label,
+  caption,
+}: {
+  value: string;
+  label: string;
+  caption: string;
+}) {
   return (
-    <div className="space-y-6">
+    <div className="rounded-2xl border border-line bg-surface-2 p-4">
+      <p className="font-mono text-3xl font-medium text-fg">{value}</p>
+      <p className="mt-1 text-sm font-medium text-fg">{label}</p>
+      <p className="mt-1 text-xs leading-relaxed text-fg-dim">{caption}</p>
+    </div>
+  );
+}
+
+export default async function LedgerPage() {
+  const { summary, rows, calibration } = await getLedgerData();
+  const hasRecord = summary.count > 0;
+
+  return (
+    <article className="space-y-8">
       <header>
-        <h1 className="text-2xl font-bold tracking-tight">The ledger</h1>
-        <p className="mt-2 text-black/70 dark:text-white/70">
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+          The ledger
+        </h1>
+        <p className="mt-2 max-w-prose text-sm leading-relaxed text-fg-dim">
           Our identity is radical transparency. Every prediction is timestamped,
-          locked at kickoff, and scored properly after full-time. The misses stay
-          visible — permanently.
+          locked at kickoff, and scored properly after full-time — wins and
+          losses alike. The misses stay visible, permanently.
         </p>
       </header>
 
-      <section
-        aria-labelledby="record-heading"
-        className="rounded-lg border border-black/10 p-4 dark:border-white/15"
-      >
-        <h2 id="record-heading" className="text-lg font-semibold">
-          Running record
-        </h2>
-        {/* TODO(ARCHITECTURE.md §7, §10): query scored predictions and show the
-            running record incl. losses, mean Brier score, mean log loss and a
-            calibration table. Only locked + scored rows count; unlocked_void is
-            excluded from the scored record (§5, §10). */}
-        <p className="mt-2 text-sm text-black/60 dark:text-white/60">
-          The running record, mean Brier score, log loss and calibration will
-          appear here.
-        </p>
-      </section>
+      {!hasRecord ? (
+        <section
+          aria-labelledby="record-heading"
+          className="rounded-2xl border border-line bg-surface p-5"
+        >
+          <h2
+            id="record-heading"
+            className="font-display text-base font-semibold tracking-tight text-fg"
+          >
+            The record opens soon
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-fg-dim">
+            No scored predictions yet. Once the first matches are locked at
+            kickoff and finish, the running record, mean Brier score, log loss
+            and calibration appear here — wins and losses alike.
+          </p>
+        </section>
+      ) : (
+        <>
+          <section aria-labelledby="record-heading">
+            <SectionHeader id="record-heading" title="Running record" />
+            <div className="grid grid-cols-2 gap-3">
+              <Metric
+                value={fmt(summary.meanBrier)}
+                label="Mean Brier score"
+                caption="0 best, 2 worst — lower is better. Losses included."
+              />
+              <Metric
+                value={fmt(summary.meanLogLoss)}
+                label="Mean log loss"
+                caption="Punishes confident misses — lower is better."
+              />
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-fg-dim">
+              Across{' '}
+              <span className="font-mono text-fg">{summary.count}</span> scored
+              predictions — wins and losses alike. The outcome we leaned towards
+              came in{' '}
+              <span className="font-mono text-fg">{summary.hits}</span> of{' '}
+              <span className="font-mono text-fg">{summary.count}</span>
+              {summary.hitRate !== null && (
+                <>
+                  {' '}
+                  (<span className="font-mono">{pct(summary.hitRate)}</span>)
+                </>
+              )}
+              ; every miss is counted in full.
+            </p>
+          </section>
 
-      <p className="rounded-md bg-black/5 p-3 text-xs text-black/70 dark:bg-white/10 dark:text-white/70">
-        <strong>Sample size matters.</strong> Small samples are noisy; these
-        numbers only mean something over dozens-to-hundreds of scored
-        predictions. We show the count alongside every metric so the record is
-        honest about its own limits.
-      </p>
-      <p className="text-xs text-black/60 dark:text-white/60">
-        {ANALYSIS_NOT_ADVICE}
-      </p>
-    </div>
+          <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
+            <span className="font-medium text-fg">Sample size matters.</span>{' '}
+            Small samples are noisy; these numbers only mean something over
+            dozens-to-hundreds of scored predictions. We show the count alongside
+            every metric so the record is honest about its own limits.
+          </p>
+
+          <section aria-labelledby="calibration-heading">
+            <SectionHeader id="calibration-heading" title="Calibration" />
+            <p className="mb-3 max-w-prose text-sm leading-relaxed text-fg-dim">
+              Calibration asks a simple question: when we say 30%, does it happen
+              about 30% of the time? Each band groups every home, draw and away
+              probability we assigned, so {summary.count} matches give{' '}
+              <span className="font-mono">{summary.count * 3}</span> data points.
+              Well-calibrated means the two right-hand columns roughly agree.
+            </p>
+            <CalibrationTable bins={calibration} />
+          </section>
+
+          {/* Reserved ad slot — built-ready but renders nothing in v1 (§4, §13). */}
+          <AdSlot slot="ledger-inline" />
+
+          <section aria-labelledby="calls-heading">
+            <SectionHeader id="calls-heading" title="Every scored call" />
+            <LedgerTable rows={rows} />
+            <p className="mt-2 text-xs leading-relaxed text-fg-dim">
+              Newest first. Lower Brier is better (0 to 2). Tap any match for its
+              full breakdown, including log loss.
+            </p>
+          </section>
+        </>
+      )}
+
+      <div className="space-y-2 rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
+        <p>{THIRD_PARTY_LABEL}</p>
+        <p>{ANALYSIS_NOT_ADVICE}</p>
+      </div>
+    </article>
   );
 }
