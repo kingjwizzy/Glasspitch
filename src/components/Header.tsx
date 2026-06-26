@@ -9,16 +9,24 @@ const NAV = [
 
 export default function Header() {
   return (
-    <header className="border-b border-black/10 dark:border-white/15">
-      <div className="mx-auto flex w-full max-w-screen-md items-center justify-between gap-4 px-4 py-3">
-        <Link href="/" className="text-lg font-bold tracking-tight">
+    <header className="sticky top-0 z-20 border-b border-line bg-bg/85 backdrop-blur-sm">
+      <div className="mx-auto flex w-full max-w-screen-md items-center justify-between gap-4 px-4 py-1.5">
+        <Link
+          href="/"
+          className="inline-flex min-h-11 items-center font-display text-lg font-semibold tracking-tight text-fg"
+        >
           {SITE_NAME}
         </Link>
         <nav aria-label="Primary">
-          <ul className="flex items-center gap-4 text-sm">
+          {/* Links sized to a ≥44px tap target (DESIGN.md §4); horizontal
+              padding gives the spacing so adjacent targets don't collide. */}
+          <ul className="-mr-2 flex items-center text-sm">
             {NAV.map((item) => (
               <li key={item.href}>
-                <Link href={item.href} className="hover:underline">
+                <Link
+                  href={item.href}
+                  className="inline-flex min-h-11 items-center rounded-md px-3 text-fg-dim transition-colors hover:text-fg"
+                >
                   {item.label}
                 </Link>
               </li>

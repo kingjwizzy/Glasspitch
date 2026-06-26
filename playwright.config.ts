@@ -33,5 +33,11 @@ export default defineConfig({
     timeout: 120_000,
     // Locally, reuse a server already on :3000; in CI always start fresh.
     reuseExistingServer: !process.env.CI,
+    // Render the home page with representative preview data (server-only flag,
+    // writes nothing — see src/lib/queries/homepage.preview.ts) so the e2e
+    // a11y/landmark specs exercise the populated hero + ProbabilityBars, not
+    // only the empty state. Merged over process.env (CI provides the dummy
+    // NEXT_PUBLIC_* there; locally `next` reads them from .env.local).
+    env: { PREVIEW_HOMEPAGE: '1' },
   },
 });

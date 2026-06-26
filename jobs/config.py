@@ -11,6 +11,17 @@ jobs. Secrets are NEVER hardcoded: the API key is read from the environment
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load the .env sitting next to this file (jobs/.env) by EXPLICIT path, so the
+# env-overridable settings below are honored no matter how a job is invoked
+# (python -m, -c, pytest). A bare load_dotenv() resolves the file differently under
+# -c (cwd) vs -m (caller dir); the explicit path is deterministic. ``config`` is
+# imported before ``db.py`` (which also calls load_dotenv — idempotent). The .env
+# file is never committed (§12).
+load_dotenv(Path(__file__).with_name(".env"))
 
 # --- Football data source: API-Football (API-Sports, direct) ----------------
 API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io"
@@ -44,11 +55,19 @@ def api_football_key() -> str:
 
 
 # --- Tracked competitions ----------------------------------------------------
-# API-Football numeric league IDs. League 1 = FIFA World Cup.
-TRACKED_LEAGUE_IDS: list[int] = [1]
+# API-Football numeric league IDs. League 1 = FIFA World Cup. The LIVE default is
+# league 1; WC_LEAGUE_ID overrides it (e.g. for a dev seed). See docs/SEEDING.md.
+TRACKED_LEAGUE_IDS: list[int] = [int(os.environ.get("WC_LEAGUE_ID") or "1")]
 
-# API-Football uses the start year for the season. FIFA World Cup 2026.
-SEASON: int = 2026
+# The live production season — the SINGLE SOURCE OF TRUTH for "which season is the
+# real tournament". It is the committed default for SEASON below, and the dev tools
+# (seed_predictions_dev, reset_season) key their safety interlocks on it so a stray
+# run can't touch the live ledger. FIFA World Cup 2026. (docs/SEEDING.md)
+LIVE_SEASON: int = 2026
+
+# API-Football uses the start year for the season. LIVE default = LIVE_SEASON (FIFA
+# World Cup 2026); WC_SEASON overrides it (e.g. WC_SEASON=2022 for the Qatar dev seed).
+SEASON: int = int(os.environ.get("WC_SEASON") or str(LIVE_SEASON))
 
 # Number of recent matches to summarise for "form" on team/match pages (§4).
 FORM_MATCH_COUNT: int = 5
