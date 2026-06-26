@@ -187,7 +187,9 @@ function mean(values: number[]): number | null {
 
 function buildSummary(rows: LedgerRowView[]): LedgerSummary {
   // count is the size of the set we actually averaged, so the headline mean and
-  // the sample size it claims can never diverge (the homepage.ts invariant).
+  // the sample size it claims can never diverge (the homepage.ts invariant). load()
+  // requires brier_score, log_loss AND result non-null, so briers.length ===
+  // logLosses.length === count and both means rest on the same sample.
   const count = rows.length;
   const briers = rows
     .map((r) => r.brier_score)
@@ -274,12 +276,21 @@ async function load(): Promise<LedgerData> {
   // the SAME set (an unbounded select is silently row-capped by PostgREST, which
   // would diverge the mean from the count it claims). The limit is far above WC
   // scale; a SQL aggregate RPC is the scale path once the ledger outgrows it.
+  //
+  // Both per-row scores AND the result are required non-null, so every displayed
+  // figure — mean Brier, mean log loss, the hit/miss split and the 3-per-match
+  // calibration points — is computed over the SAME guaranteed set; the count can
+  // never diverge from a mean it claims. The scoring job writes all three together,
+  // so this filter excludes nothing today — it makes the invariant structural
+  // rather than dependent on that job's behaviour.
   const res = await sb
     .from('predictions')
     .select(SCORED_SELECT)
     .eq('source', DISPLAY_SOURCE)
     .eq('status', 'scored')
     .not('brier_score', 'is', null)
+    .not('log_loss', 'is', null)
+    .not('result', 'is', null)
     .order('scored_at', { ascending: false })
     .limit(5000);
 
@@ -292,7 +303,7 @@ async function load(): Promise<LedgerData> {
  *
  * `PREVIEW_LEDGER` is a dev/preview escape hatch (NOT a NEXT_PUBLIC var, so it is
  * server-only, never reaches the client bundle, and is never set in production):
- * `'empty'` renders the honest no-record state and any other truthy value renders
+ * `'empty'` renders the honest no-record state and `'1'` or `'default'` render
  * illustrative in-memory rows, so the page can be built and screenshotted with no
  * seeded database. It writes NOTHING — the empty state is a READ-TIME toggle only,
  * never produced by deleting, voiding or writing to the DB.

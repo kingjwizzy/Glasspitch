@@ -66,7 +66,7 @@ export function previewLedgerRows(): LedgerRowView[] {
     // A miss — the model leaned home, the away side won.
     row('Brazil', 'Croatia', [0.49, 0.28, 0.23], [2, 1], [1, 2], 'away', 0.86, 1.47),
     row('Germany', 'Japan', [0.41, 0.29, 0.30], [1, 1], [1, 1], 'draw', 0.62, 1.24),
-    // A miss on a genuine coin-flip — gave the away win a fair chance, it landed.
+    // A miss — backed the away side on a near coin-flip, but it finished level (a draw).
     row('Morocco', 'Spain', [0.30, 0.33, 0.37], [1, 1], [0, 0], 'draw', 0.64, 1.11),
     row('Croatia', 'Japan', [0.34, 0.33, 0.33], [1, 1], [1, 1], 'draw', 0.66, 1.11),
     // A miss — we gave the eventual outcome a low chance.

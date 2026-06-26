@@ -28,7 +28,7 @@ function Row({ c }: { c: LedgerRowView }) {
       <th scope="row" className="px-1 py-3 text-left align-middle font-normal">
         <Link
           href={`/match/${c.fixtureId}`}
-          aria-label={`${c.home} versus ${c.away} — view match details`}
+          aria-label={`${c.home} versus ${c.away}, backed ${pickName} at ${pickPct} — view match details`}
           className="block min-h-11 before:absolute before:inset-0 before:content-['']"
         >
           <span className="block truncate text-sm font-medium text-fg">

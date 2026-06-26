@@ -24,7 +24,7 @@ export default function CalibrationTable({ bins }: { bins: CalibrationBin[] }) {
               Confidence band
             </th>
             <th scope="col" className="px-4 py-3 text-right font-medium">
-              Calls
+              Data points
             </th>
             <th scope="col" className="px-4 py-3 text-right font-medium">
               We predicted
