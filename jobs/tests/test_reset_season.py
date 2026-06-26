@@ -6,8 +6,10 @@ orchestration on top of them. The cutover bet is "wiping 2022 leaves the rest of
 the DB untouched"; the season-isolation and FK-order tests below prove it.
 """
 
+import pytest
+
 from jobs.db import SupabaseStore
-from jobs.reset_season import run
+from jobs.reset_season import LIVE_SEASON, run
 
 
 def _season_dataset(*, season, league_id, base):
@@ -215,4 +217,59 @@ def test_reset_season_live_deletes_and_reports_zero_remaining(make_supabase_clie
     # The other season survives the cutover.
     assert store.count_season_rows(2026) == {
         "leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3,
+    }
+
+
+# --- safety interlock: refuse deleting the live production season -------------
+# Symmetry with the seed_predictions_dev interlock: the cutover tears down the
+# disposable dev season (2022), never the real 2026 ledger. A stray --season 2026
+# must be refused unless --allow-live-season is passed.
+
+
+def test_reset_season_refuses_live_default_season(make_supabase_client):
+    client = make_supabase_client(**_season_dataset(season=LIVE_SEASON, league_id=2, base=500))
+    store = SupabaseStore(client=client)
+
+    with pytest.raises(SystemExit):
+        run(season=LIVE_SEASON, dry_run=False, store=store)
+
+    # Refusal happens before any DB work: nothing deleted, the live data is intact.
+    assert client.delete_log == []
+    assert store.count_season_rows(LIVE_SEASON) == {
+        "leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3,
+    }
+
+
+def test_reset_season_dry_run_does_not_bypass_interlock(make_supabase_client):
+    # The interlock is about WHICH season, not about writes — even a dry-run refuses.
+    client = make_supabase_client(**_season_dataset(season=LIVE_SEASON, league_id=2, base=500))
+    store = SupabaseStore(client=client)
+
+    with pytest.raises(SystemExit):
+        run(season=LIVE_SEASON, dry_run=True, store=store)
+
+    assert client.delete_log == []
+
+
+def test_reset_season_allow_live_override_deletes(make_supabase_client):
+    client = make_supabase_client(**_season_dataset(season=LIVE_SEASON, league_id=2, base=500))
+    store = SupabaseStore(client=client)
+
+    summary = run(season=LIVE_SEASON, dry_run=False, store=store, allow_live=True)
+
+    assert summary["deleted"] == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3}
+    assert summary["remaining"] == {"leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0}
+    assert client.delete_log == ["predictions", "fixtures", "teams", "leagues"]
+
+
+def test_reset_season_dev_season_proceeds_without_override(make_supabase_client):
+    # A normal dev teardown (--season 2022) is untouched by the interlock.
+    client = make_supabase_client(**_season_dataset(season=2022, league_id=1, base=0))
+    store = SupabaseStore(client=client)
+
+    summary = run(season=2022, dry_run=False, store=store)
+
+    assert summary["deleted"] == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3}
+    assert store.count_season_rows(2022) == {
+        "leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0,
     }
