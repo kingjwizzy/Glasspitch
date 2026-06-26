@@ -1,0 +1,150 @@
+"""Tests for the dev-only historical seeder (docs/SEEDING.md).
+
+seed_predictions_dev backfills predictions for ALREADY-FINISHED fixtures by reusing
+the real fetch_predictions helpers, stamping published_at just before kickoff so the
+stock lock/score jobs then treat them as valid pre-kickoff predictions. Covered here:
+helper reuse + back-dating, --limit, idempotency, and the DB-only dry-run.
+
+NB: there is no live-season (2026) interlock in the module today — see the project
+report; the safety refusal the runbook implies is NOT yet implemented, so it is not
+asserted here.
+"""
+
+from datetime import timedelta
+
+import pytest
+
+from jobs import elo, util
+from jobs.seed_predictions_dev import PUBLISH_LEAD, run
+
+NOOP_SLEEP = lambda _seconds: None  # noqa: E731 — keep tests off the 7s pacing clock
+
+
+def _finished(make_fixture, **overrides):
+    base = dict(status="finished", final_home_goals=2, final_away_goals=1)
+    base.update(overrides)
+    return make_fixture(**base)
+
+
+def test_seed_inserts_backdated_api_and_elo(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    fixture = _finished(
+        make_fixture, id=300, api_fixture_id=9001,
+        home_team_id=200, away_team_id=201,
+        kickoff_utc="2022-11-20T16:00:00+00:00",
+    )
+    store = make_store(finished=[fixture])
+    api = make_api(predictions={9001: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP)
+
+    assert counts["api_inserted"] == 1 and counts["elo_inserted"] == 1
+    assert {p["source"] for p in store.inserted_predictions} == {"api-football", "inhouse-elo"}
+
+    expected_publish = util.parse_iso("2022-11-20T16:00:00+00:00") - PUBLISH_LEAD
+    for pred in store.inserted_predictions:
+        # locked_at is kickoff; published_at is back-dated a full day BEFORE it, so
+        # the real lock_predictions counts it as a valid pre-kickoff prediction.
+        assert pred["locked_at"] == "2022-11-20T16:00:00+00:00"
+        assert util.parse_iso(pred["published_at"]) == expected_publish
+        assert util.parse_iso(pred["published_at"]) < util.parse_iso(pred["locked_at"])
+        assert pred["locked_at"] != pred["published_at"]
+        assert pred["prob_home"] + pred["prob_draw"] + pred["prob_away"] == pytest.approx(1.0)
+
+    # Reuses the real parse/build helpers: the api-football row carries the parsed
+    # 50/30/20 split and a derived scoreline, not some seeder-local fabrication.
+    api_row = next(p for p in store.inserted_predictions if p["source"] == "api-football")
+    assert api_row["prob_home"] == pytest.approx(0.5)
+    assert api_row["prob_draw"] == pytest.approx(0.3)
+    assert api_row["prob_away"] == pytest.approx(0.2)
+    assert api_row["predicted_home_goals"] == 2 and api_row["predicted_away_goals"] == 1
+
+
+def test_publish_lead_is_one_day():
+    # The back-date margin is what keeps a seeded row on the valid side of kickoff.
+    assert PUBLISH_LEAD == timedelta(days=1)
+
+
+def test_limit_caps_new_api_fetches(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    fixtures = [
+        _finished(
+            make_fixture, id=300 + i, api_fixture_id=9000 + i,
+            kickoff_utc=f"2022-11-2{i}T16:00:00+00:00",
+        )
+        for i in range(3)
+    ]
+    store = make_store(finished=fixtures)
+    api = make_api(predictions={9000 + i: predictions_payload for i in range(3)})
+
+    counts = run(dry_run=False, store=store, api=api, limit=1, sleep=NOOP_SLEEP)
+
+    assert counts["api_fetched"] == 1  # capped
+    assert api.prediction_calls == [9000]  # only the first finished fixture
+    # Only that one fixture got seeded (its api + elo rows): 2 predictions total.
+    assert len(store.inserted_predictions) == 2
+
+
+def test_seed_is_idempotent(make_store, make_api, make_fixture, predictions_payload):
+    fixture = _finished(make_fixture, id=300, api_fixture_id=9001)
+    store = make_store(finished=[fixture])
+
+    first = run(
+        dry_run=False, store=store,
+        api=make_api(predictions={9001: predictions_payload}), sleep=NOOP_SLEEP,
+    )
+    assert first["api_inserted"] == 1 and first["elo_inserted"] == 1
+    assert len(store.predictions) == 2
+
+    # Re-run against the now-seeded store with a fresh API client.
+    api2 = make_api(predictions={9001: predictions_payload})
+    second = run(dry_run=False, store=store, api=api2, sleep=NOOP_SLEEP)
+
+    assert second["api_inserted"] == 0 and second["elo_inserted"] == 0
+    assert second["api_skipped_existing"] == 1 and second["elo_skipped_existing"] == 1
+    assert api2.prediction_calls == []  # already-seeded fixture is never re-fetched
+    assert len(store.predictions) == 2  # no duplicates
+
+
+def test_dry_run_writes_nothing_and_calls_no_api(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    fixture = _finished(make_fixture, id=300, api_fixture_id=9001)
+    store = make_store(finished=[fixture])
+    api = make_api(predictions={9001: predictions_payload})
+
+    counts = run(dry_run=True, store=store, api=api, sleep=NOOP_SLEEP)
+
+    assert store.inserted_predictions == []  # no writes
+    # Unlike the stock jobs, the seeder's dry-run is DB-only: it spends no budget.
+    assert api.request_count == 0
+    assert api.prediction_calls == []
+    assert counts["api_fetched"] == 1  # but still reports what it WOULD fetch
+
+
+def test_dry_run_handles_empty_store(make_store, make_api):
+    counts = run(dry_run=True, store=make_store(finished=[]), api=make_api(), sleep=NOOP_SLEEP)
+    assert counts["finished"] == 0
+    assert counts["api_fetched"] == 0 and counts["elo_inserted"] == 0
+
+
+def test_seeded_elo_uses_replayed_ratings(make_store, make_api, make_fixture):
+    # Elo ratings are derived by replaying finished results; a 2-0 win should lift
+    # the home side above the cold-start default. Empty api payload isolates Elo.
+    fixture = _finished(
+        make_fixture, id=300, api_fixture_id=9001,
+        home_team_id=200, away_team_id=201,
+        final_home_goals=2, final_away_goals=0,
+        kickoff_utc="2022-11-20T16:00:00+00:00",
+    )
+    store = make_store(finished=[fixture])
+    api = make_api(predictions={9001: {"response": []}})
+
+    counts = run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP)
+
+    assert counts["elo_inserted"] == 1
+    elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
+    default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
+    assert elo_row["prob_home"] > default_home

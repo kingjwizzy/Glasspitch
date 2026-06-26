@@ -6,6 +6,8 @@ and these in-memory fakes mimic the subset of behaviour the jobs rely on.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from jobs import util
@@ -148,6 +150,80 @@ class FakeApiClient:
         return self._predictions.get(fixture, {"response": []})
 
 
+class _FakeQuery:
+    """Minimal stand-in for the supabase-py query builder.
+
+    Supports ONLY the operations jobs.db.SupabaseStore.count_season_rows /
+    delete_season actually use: ``table(t).select(cols).eq(c, v)``,
+    ``.in_(c, vals)``, ``.delete()``, ``.execute().data``. Anything else is
+    intentionally absent so a test can't lean on behaviour the real teardown
+    never exercises.
+    """
+
+    def __init__(self, client, table):
+        self._client = client
+        self._table = table
+        self._op = "select"
+        self._filters: list[tuple[str, str, object]] = []
+
+    def select(self, *cols):
+        self._op = "select"
+        return self
+
+    def delete(self):
+        self._op = "delete"
+        return self
+
+    def eq(self, col, value):
+        self._filters.append(("eq", col, value))
+        return self
+
+    def in_(self, col, values):
+        self._filters.append(("in", col, list(values)))
+        return self
+
+    def _matches(self, row) -> bool:
+        for kind, col, value in self._filters:
+            if kind == "eq" and row.get(col) != value:
+                return False
+            if kind == "in" and row.get(col) not in value:
+                return False
+        return True
+
+    def execute(self):
+        rows = self._client.tables[self._table]
+        matched = [r for r in rows if self._matches(r)]
+        if self._op == "delete":
+            self._client.delete_log.append(self._table)
+            self._client.tables[self._table] = [r for r in rows if not self._matches(r)]
+        return SimpleNamespace(data=[dict(r) for r in matched])
+
+
+class FakeSupabaseClient:
+    """In-memory stand-in for the supabase-py Client, scoped to the table/select/
+    delete/eq/in_ surface that jobs.db's teardown (count_season_rows /
+    delete_season) uses. Lets the REAL SupabaseStore run against in-memory rows —
+    no network, no DB — so the deletion logic itself (FK-safe order, season
+    isolation) is what gets tested, not a reimplementation of it.
+
+    Seed it with table rows; ``delete_log`` records the order of delete() calls so
+    tests can assert the FK-safe sequence predictions -> fixtures -> teams -> leagues.
+    """
+
+    def __init__(self, *, leagues=None, teams=None, fixtures=None, predictions=None):
+        self.tables: dict[str, list[dict]] = {
+            "leagues": [dict(r) for r in (leagues or [])],
+            "teams": [dict(r) for r in (teams or [])],
+            "fixtures": [dict(r) for r in (fixtures or [])],
+            "predictions": [dict(r) for r in (predictions or [])],
+        }
+        self.delete_log: list[str] = []
+
+    def table(self, name):
+        self.tables.setdefault(name, [])
+        return _FakeQuery(self, name)
+
+
 # --- fixtures (factories keep tests terse and isolated) ----------------------
 
 
@@ -164,6 +240,11 @@ def make_store():
 @pytest.fixture
 def make_api():
     return FakeApiClient
+
+
+@pytest.fixture
+def make_supabase_client():
+    return FakeSupabaseClient
 
 
 @pytest.fixture
