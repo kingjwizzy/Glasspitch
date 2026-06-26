@@ -12,10 +12,10 @@ import 'server-only';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
 import { favoured } from '@/lib/format';
+import { DISPLAY_SOURCE, one, withTimeout } from './shared';
 import { previewHomepageData } from './homepage.preview';
 
-/** §9: the only model ever displayed. Excludes the silently-logged Elo. */
-export const DISPLAY_SOURCE = 'api-football';
+export { DISPLAY_SOURCE };
 
 export interface PredictionView {
   prob_home: number;
@@ -132,11 +132,6 @@ interface RawScoredFixture {
   league: RawLeague | RawLeague[] | null;
 }
 
-function one<T>(v: T | T[] | null | undefined): T | null {
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v ?? null;
-}
-
 // fixtures has TWO FKs into teams, so the embeds MUST be disambiguated by
 // constraint name or PostgREST errors. predictions is embedded un-filtered (a
 // fixture has at most two: api-football + elo-v1) and the displayed one is
@@ -218,24 +213,6 @@ function mapScored(r: RawScored): RecentCallView {
     pick,
     hit: result !== null && pick === result,
   };
-}
-
-/** Resolve before `ms`, otherwise yield `fallback` — never let a slow/unreachable
- *  DB hang the build or a render (§5: the site serves from cache, data is best-effort). */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(fallback), ms);
-    p.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      () => {
-        clearTimeout(timer);
-        resolve(fallback);
-      },
-    );
-  });
 }
 
 async function load(): Promise<HomepageData> {
