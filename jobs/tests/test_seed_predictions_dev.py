@@ -5,19 +5,26 @@ the real fetch_predictions helpers, stamping published_at just before kickoff so
 stock lock/score jobs then treat them as valid pre-kickoff predictions. Covered here:
 helper reuse + back-dating, --limit, idempotency, and the DB-only dry-run.
 
-NB: there is no live-season (2026) interlock in the module today — see the project
-report; the safety refusal the runbook implies is NOT yet implemented, so it is not
-asserted here.
+The live-season interlock (the seeder HARD-REFUSES the live default season 2026
+unless --allow-live-season is passed) is covered by the interlock tests at the end.
 """
 
 from datetime import timedelta
 
 import pytest
 
-from jobs import elo, util
-from jobs.seed_predictions_dev import PUBLISH_LEAD, run
+from jobs import config, elo, util
+from jobs.seed_predictions_dev import LIVE_SEASON, PUBLISH_LEAD, run
 
 NOOP_SLEEP = lambda _seconds: None  # noqa: E731 — keep tests off the 7s pacing clock
+
+
+@pytest.fixture(autouse=True)
+def _dev_season(monkeypatch):
+    """Default every test here to a DEV season (mirrors WC_SEASON=2022 in jobs/.env),
+    so the live-season interlock stays dormant for the behaviour tests. The interlock
+    tests re-patch config.SEASON to the live default explicitly."""
+    monkeypatch.setattr(config, "SEASON", 2022)
 
 
 def _finished(make_fixture, **overrides):
@@ -148,3 +155,59 @@ def test_seeded_elo_uses_replayed_ratings(make_store, make_api, make_fixture):
     elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
     default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
     assert elo_row["prob_home"] > default_home
+
+
+# --- safety interlock: refuse the live production season ----------------------
+
+
+def test_refuses_live_default_season(
+    monkeypatch, make_store, make_api, make_fixture, predictions_payload
+):
+    # Configured for the live default (2026): seeding back-dated rows onto the real
+    # ledger must be refused outright.
+    monkeypatch.setattr(config, "SEASON", LIVE_SEASON)
+    store = make_store(finished=[_finished(make_fixture, id=300, api_fixture_id=9001)])
+    api = make_api(predictions={9001: predictions_payload})
+
+    with pytest.raises(SystemExit):
+        run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP)
+
+    # The refusal happens BEFORE any work: nothing written, no API budget spent.
+    assert store.inserted_predictions == []
+    assert api.request_count == 0
+
+
+def test_dry_run_does_not_bypass_the_interlock(
+    monkeypatch, make_store, make_api, make_fixture, predictions_payload
+):
+    # The interlock is about WHICH season, not about writes — a dry-run must refuse too.
+    monkeypatch.setattr(config, "SEASON", LIVE_SEASON)
+    store = make_store(finished=[_finished(make_fixture, id=300, api_fixture_id=9001)])
+    api = make_api(predictions={9001: predictions_payload})
+
+    with pytest.raises(SystemExit):
+        run(dry_run=True, store=store, api=api, sleep=NOOP_SLEEP)
+
+
+def test_allow_live_season_overrides_the_interlock(
+    monkeypatch, make_store, make_api, make_fixture, predictions_payload
+):
+    monkeypatch.setattr(config, "SEASON", LIVE_SEASON)
+    store = make_store(finished=[_finished(make_fixture, id=300, api_fixture_id=9001)])
+    api = make_api(predictions={9001: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP, allow_live=True)
+
+    assert counts["api_inserted"] == 1 and counts["elo_inserted"] == 1  # proceeds
+
+
+def test_dev_season_seeds_without_override(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    # config.SEASON is a dev season here (autouse _dev_season) -> no override needed.
+    store = make_store(finished=[_finished(make_fixture, id=300, api_fixture_id=9001)])
+    api = make_api(predictions={9001: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP)
+
+    assert counts["api_inserted"] == 1 and counts["elo_inserted"] == 1

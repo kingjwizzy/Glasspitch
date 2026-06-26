@@ -43,6 +43,11 @@ log = logging.getLogger(__name__)
 PUBLISH_LEAD = timedelta(days=1)
 # Pace api-football calls to stay under the free tier's ~10 requests/minute.
 DEFAULT_PACE_SECONDS = 7.0
+# The committed live production season (jobs/config.py's SEASON default). The dev
+# seeder back-dates predictions onto FINISHED fixtures — only ever valid for
+# disposable dev data — so it HARD-REFUSES this season unless explicitly overridden,
+# keeping fabricated rows off the real prediction ledger (docs/SEEDING.md).
+LIVE_SEASON = 2026
 
 
 def _backdated_publish(kickoff_utc: str) -> str:
@@ -57,7 +62,20 @@ def run(
     api: Optional[ApiFootballClient] = None,
     pace_seconds: float = DEFAULT_PACE_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    allow_live: bool = False,
 ) -> dict:
+    # Safety interlock: never back-date predictions onto the LIVE production season.
+    # The seeder fabricates pre-kickoff rows for already-finished fixtures, which is
+    # only meaningful for disposable dev data; running it against the real season
+    # would forge ledger history. A dev run sets WC_SEASON to a back-test season
+    # (config.SEASON != LIVE_SEASON); override deliberately with --allow-live-season.
+    if config.SEASON == LIVE_SEASON and not allow_live:
+        raise SystemExit(
+            f"refusing to seed the LIVE season {config.SEASON}: the dev seeder only "
+            f"back-dates disposable dev data (see docs/SEEDING.md). Set WC_SEASON to a "
+            f"dev season, or pass --allow-live-season to override."
+        )
+
     api = api if api is not None else ApiFootballClient()
     store = store if store is not None else SupabaseStore()
 
@@ -164,6 +182,12 @@ def main(argv: Optional[Sequence[str]] = None) -> dict:
         "--pace-seconds", type=float, default=DEFAULT_PACE_SECONDS,
         help="Seconds to sleep between api-football calls (free-tier pacing).",
     )
+    parser.add_argument(
+        "--allow-live-season",
+        action="store_true",
+        help="Override the safety interlock and seed even when the configured season "
+        f"is the live default ({LIVE_SEASON}). Dev tooling only — never for live data.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
     args = parser.parse_args(argv)
 
@@ -172,7 +196,12 @@ def main(argv: Optional[Sequence[str]] = None) -> dict:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    summary = run(dry_run=args.dry_run, limit=args.limit, pace_seconds=args.pace_seconds)
+    summary = run(
+        dry_run=args.dry_run,
+        limit=args.limit,
+        pace_seconds=args.pace_seconds,
+        allow_live=args.allow_live_season,
+    )
     mode = "DRY-RUN" if args.dry_run else "LIVE"
     logging.getLogger("jobs").info("[%s] Seed predictions (dev) complete: %s", mode, summary)
     return summary
