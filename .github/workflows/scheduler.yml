@@ -1,0 +1,181 @@
+name: Jobs scheduler
+
+# Glass Pitch scheduled-jobs runner (ARCHITECTURE.md §5, §8, §10).
+#
+# The Python jobs are the ONLY writers to the database and the ONLY callers of
+# the football API (the §5 golden rule). This workflow is their scheduler.
+#
+# Pipeline & cadence (all times UTC):
+#   fetch_fixtures     every 6h   — upcoming sweep + the "/fixtures status poll"
+#                                   that detects full-time so results can score
+#                                   (§8 lists both roles; one job, one endpoint).
+#   fetch_predictions  daily      — one third-party prediction PER FIXTURE, EVER
+#                                   (never re-fetched), plus the logged Elo (§9).
+#   lock_predictions   every 10m  — at kickoff: published -> locked; late ones ->
+#                                   unlocked_void. The ledger's integrity backbone
+#                                   (§10). DB-only — makes NO football-API call.
+#   score_results      every 20m  — finished fixtures: copy score, set result,
+#                                   compute Brier + log loss, mark scored (§10).
+#                                   DB-only — makes NO football-API call. End-to-end
+#                                   scoring latency is bounded by fetch_fixtures'
+#                                   poll: a finished match is scored within ~6h+20m.
+#
+# Daily API budget (free tier = 100 req/day; §8):
+#   fetch_fixtures    4 runs x 1 league x 1 request          =  4 req/day
+#   fetch_predictions 1 run, once-per-NEW-fixture (<=64 ever) = ~0-64 req/day,
+#                     and 64 only on the one-time backfill day; ~0-16 steady
+#   lock_predictions  144 runs x 0 requests                  =  0 req/day
+#   score_results      72 runs x 0 requests                  =  0 req/day
+#   Worst realistic day (initial backfill) ~ 68 req; steady state ~ 4-20 req.
+#   Comfortably under 100; the per-run MAX_REQUESTS_PER_RUN guard caps any one run.
+#
+# All writes are idempotent (upserts keyed on api_* ids; predictions fetched
+# once), so every job is safe to re-run and safe to overlap-skip (§5, §8).
+
+on:
+  # Manual trigger is ALWAYS enabled — run any single job (or all) from the
+  # Actions tab via "Run workflow". This is how you test before go-live.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job to run'
+        type: choice
+        default: all
+        options:
+          - all
+          - fetch_fixtures
+          - fetch_predictions
+          - lock_predictions
+          - score_results
+      dry_run:
+        description: 'Dry run — no DB writes. NOTE: fetch_* still call the football API (counts against the 100/day budget).'
+        type: boolean
+        default: false
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # UNCOMMENT AT GO-LIVE — turns on the automatic cron schedule.
+  # Until the five lines below (`schedule:` + its four `- cron:` entries) are
+  # uncommented, NOTHING fires automatically: the workflow is manual-only via the
+  # "Run workflow" button above. Each cron string is unique and maps to exactly
+  # one job through that job's `if:` guard (github.event.schedule == '<cron>').
+  # Do NOT change the cron strings without updating the matching `if:` guards.
+  # schedule:
+  #   - cron: '0 */6 * * *'    # fetch_fixtures     — every 6h
+  #   - cron: '15 6 * * *'     # fetch_predictions  — daily 06:15 UTC
+  #   - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
+  #   - cron: '*/20 * * * *'   # score_results      — every 20 min
+
+# Least privilege: the jobs only read the checked-out repo and talk to Supabase /
+# the football API over the network. They never write back to the repo.
+permissions:
+  contents: read
+
+jobs:
+  # ---- daily: fetch fixtures (the only /fixtures caller) ----------------------
+  fetch_fixtures:
+    name: fetch_fixtures (daily sweep + full-time poll)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One run at a time: with cancel-in-progress:false a slow run makes the next
+    # queue (at most one pending) instead of piling up — never two at once.
+    concurrency:
+      group: glasspitch-scheduler-fetch_fixtures
+      cancel-in-progress: false
+    # Manual: when job == all | fetch_fixtures. Scheduled: its own cron string.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_fixtures')) ||
+      github.event.schedule == '0 */6 * * *'
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      # WC_SEASON / WC_LEAGUE_ID are intentionally NOT set: config.py defaults to
+      # the LIVE FIFA World Cup (league 1, season 2026). The 2022 dev seed stays local.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run fetch_fixtures
+        run: python -m jobs.fetch_fixtures ${{ inputs.dry_run && '--dry-run' || '' }}
+
+  # ---- daily: fetch one prediction per fixture (once, ever) -------------------
+  fetch_predictions:
+    name: fetch_predictions (once per fixture, + logged Elo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: glasspitch-scheduler-fetch_predictions
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_predictions')) ||
+      github.event.schedule == '15 6 * * *'
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run fetch_predictions
+        run: python -m jobs.fetch_predictions ${{ inputs.dry_run && '--dry-run' || '' }}
+
+  # ---- frequent: lock predictions at kickoff (DB-only, no API) ---------------
+  lock_predictions:
+    name: lock_predictions (integrity backbone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: glasspitch-scheduler-lock_predictions
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'lock_predictions')) ||
+      github.event.schedule == '*/10 * * * *'
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run lock_predictions
+        run: python -m jobs.lock_predictions ${{ inputs.dry_run && '--dry-run' || '' }}
+
+  # ---- frequent around match end: score finished fixtures (DB-only, no API) --
+  score_results:
+    name: score_results (Brier + log loss)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: glasspitch-scheduler-score_results
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'score_results')) ||
+      github.event.schedule == '*/20 * * * *'
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run score_results
+        run: python -m jobs.score_results ${{ inputs.dry_run && '--dry-run' || '' }}
