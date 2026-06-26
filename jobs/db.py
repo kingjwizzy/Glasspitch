@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -20,8 +21,10 @@ from jobs import util
 
 log = logging.getLogger(__name__)
 
-# Load jobs/.env when running locally. The .env file is never committed (§12).
-load_dotenv()
+# Load jobs/.env (the .env next to this file) by EXPLICIT path so secrets resolve
+# the same way no matter how a job is invoked (python -m, -c, pytest). Never
+# committed (§12).
+load_dotenv(Path(__file__).with_name(".env"))
 
 
 @lru_cache(maxsize=1)
@@ -238,3 +241,79 @@ class SupabaseStore:
                 "scored_at": scored_at or util.now_utc().isoformat(),
             }
         ).eq("id", prediction_id).execute()
+
+    # ----- teardown (dev tooling — see jobs/reset_season.py & docs/SEEDING.md) -----
+    # ``season`` lives only on ``leagues``; everything else is reached via
+    # league_id / fixture_id. These run as the service role; the immutability
+    # trigger is UPDATE-only, so it does not block deletes.
+    def _league_ids_for_season(self, season: int) -> list[int]:
+        rows = (
+            self._client.table("leagues")
+            .select("id")
+            .eq("season", season)
+            .execute()
+            .data
+        )
+        return [row["id"] for row in rows]
+
+    def _fixture_ids_for_leagues(self, league_ids: list[int]) -> list[int]:
+        if not league_ids:
+            return []
+        rows = (
+            self._client.table("fixtures")
+            .select("id")
+            .in_("league_id", league_ids)
+            .execute()
+            .data
+        )
+        return [row["id"] for row in rows]
+
+    def count_season_rows(self, season: int) -> dict:
+        """Count the rows ``delete_season`` would remove (for --dry-run / verify)."""
+        league_ids = self._league_ids_for_season(season)
+        fixture_ids = self._fixture_ids_for_leagues(league_ids)
+        predictions = 0
+        if fixture_ids:
+            predictions = len(
+                self._client.table("predictions")
+                .select("id")
+                .in_("fixture_id", fixture_ids)
+                .execute()
+                .data
+            )
+        teams = 0
+        if league_ids:
+            teams = len(
+                self._client.table("teams")
+                .select("id")
+                .in_("league_id", league_ids)
+                .execute()
+                .data
+            )
+        return {
+            "leagues": len(league_ids),
+            "teams": teams,
+            "fixtures": len(fixture_ids),
+            "predictions": predictions,
+        }
+
+    def delete_season(self, season: int) -> dict:
+        """Delete every row for ``season`` in FK-safe order; return what was deleted.
+
+        Order: predictions -> fixtures -> teams -> leagues (children first, because
+        fixtures.home/away_team_id -> teams has no cascade). Idempotent: a season
+        with no rows deletes nothing. Counts are captured BEFORE deleting so they
+        are reliable regardless of the delete's return representation.
+        """
+        counts = self.count_season_rows(season)
+        league_ids = self._league_ids_for_season(season)
+        fixture_ids = self._fixture_ids_for_leagues(league_ids)
+        if fixture_ids:
+            self._client.table("predictions").delete().in_(
+                "fixture_id", fixture_ids
+            ).execute()
+        if league_ids:
+            self._client.table("fixtures").delete().in_("league_id", league_ids).execute()
+            self._client.table("teams").delete().in_("league_id", league_ids).execute()
+            self._client.table("leagues").delete().in_("id", league_ids).execute()
+        return counts
