@@ -40,6 +40,20 @@ export function formatKickoff(iso: string): string {
   return `${p.weekday} ${p.day} ${p.month}, ${p.hour}:${p.minute} UTC`;
 }
 
+const DATE_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'UTC',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+/** ISO timestamp → "18 Dec 2022" (stable, UTC). Used to keep per-match titles
+ *  unique when the same two teams meet more than once. */
+export function formatDateShort(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : DATE_FMT.format(d);
+}
+
 /** The single most likely outcome and its probability. */
 export function favoured(p: Probs): { key: MatchResult; prob: number } {
   const entries: Array<[MatchResult, number]> = [
@@ -63,10 +77,25 @@ export function predictedPick(p: Probs): MatchResult {
   return favoured(p).key;
 }
 
-function outcomeTeam(key: MatchResult, home: string, away: string): string {
+/** Human label for a match outcome. */
+export const RESULT_LABEL: Record<MatchResult, string> = {
+  home: 'Home win',
+  draw: 'Draw',
+  away: 'Away win',
+};
+
+/** Name the picked outcome by team, or "the draw" — for "we backed …" copy. */
+export function outcomeName(key: MatchResult, home: string, away: string): string {
   if (key === 'home') return home;
   if (key === 'away') return away;
-  return 'a draw';
+  return 'the draw';
+}
+
+/** Probability the prediction assigned to a given outcome. */
+export function probOf(p: Probs, key: MatchResult): number {
+  if (key === 'home') return p.home;
+  if (key === 'away') return p.away;
+  return p.draw;
 }
 
 export interface ReadInput extends Probs {
@@ -89,15 +118,12 @@ export function templateRead(input: ReadInput): string {
   const favPct = pct(fav.prob);
 
   if (topTwoSpread(probs) < 0.08) {
-    const team =
-      fav.key === 'draw'
-        ? 'the draw'
-        : outcomeTeam(fav.key, input.home_name, input.away_name);
+    const team = outcomeName(fav.key, input.home_name, input.away_name);
     return `Too close to call — the model gives ${team} only a slight edge at ${favPct}, ${score} its predicted score.`;
   }
   if (fav.key === 'draw') {
     return `The model leans towards a stalemate — ${favPct} on the draw, ${score} predicted.`;
   }
-  const team = outcomeTeam(fav.key, input.home_name, input.away_name);
+  const team = outcomeName(fav.key, input.home_name, input.away_name);
   return `The model leans ${team} at ${favPct}; it predicts ${score}.`;
 }

@@ -28,6 +28,7 @@
   --away: #f2a33c; /* amber */
 
   --miss: #f2555a; /* "miss" ✗ and live state */
+  --miss-bright: #ff7176; /* lightened miss for small TEXT, when #f2555a dips below 4.5:1 */
   --live: #f2555a;
 
   /* Back-compat with the scaffold tokens still referenced by not-yet-themed
@@ -56,6 +57,7 @@
   --color-away: var(--away);
 
   --color-miss: var(--miss);
+  --color-miss-bright: var(--miss-bright);
   --color-live: var(--live);
 
   --color-background: var(--background);

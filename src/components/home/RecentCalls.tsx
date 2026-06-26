@@ -1,47 +1,15 @@
 import Link from 'next/link';
-import { CheckIcon, CrossIcon } from '@/components/icons';
-import { pct, scoreLine } from '@/lib/format';
-import type { MatchResult } from '@/lib/types';
+import ResultBadge from '@/components/ResultBadge';
+import { outcomeName, pct, probOf, RESULT_LABEL, scoreLine } from '@/lib/format';
 import type { RecentCallView } from '@/lib/queries/homepage';
 
 // "How recent calls landed" — the signature section (DESIGN.md §1, §4). Finished
 // matches with the probability we assigned and a green ✓ / red ✗. Misses sit
 // beside hits and are NEVER hidden — the visible honesty IS the product.
 
-const RESULT_WORD: Record<MatchResult, string> = {
-  home: 'Home win',
-  draw: 'Draw',
-  away: 'Away win',
-};
-
-function outcomeName(key: MatchResult, home: string, away: string): string {
-  if (key === 'home') return home;
-  if (key === 'away') return away;
-  return 'the draw';
-}
-
-function probOf(c: RecentCallView, key: MatchResult): number {
-  if (key === 'home') return c.prob_home;
-  if (key === 'away') return c.prob_away;
-  return c.prob_draw;
-}
-
-function ResultBadge({ hit }: { hit: boolean }) {
-  return (
-    <span
-      role="img"
-      aria-label={hit ? 'Correct call' : 'Missed call'}
-      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
-        hit ? 'bg-green/15 text-green' : 'bg-miss/15 text-miss'
-      }`}
-    >
-      {hit ? <CheckIcon className="h-4 w-4" /> : <CrossIcon className="h-4 w-4" />}
-    </span>
-  );
-}
-
 function CallRow({ c }: { c: RecentCallView }) {
   const pickName = outcomeName(c.pick, c.home, c.away);
+  const pickProb = probOf({ home: c.prob_home, draw: c.prob_draw, away: c.prob_away }, c.pick);
   return (
     <li>
       <Link
@@ -55,7 +23,7 @@ function CallRow({ c }: { c: RecentCallView }) {
           </p>
           <p className="mt-0.5 truncate text-xs text-fg-dim">
             We backed {pickName} (
-            <span className="font-mono">{pct(probOf(c, c.pick))}</span>)
+            <span className="font-mono">{pct(pickProb)}</span>)
           </p>
         </div>
         <div className="shrink-0 text-right">
@@ -65,7 +33,7 @@ function CallRow({ c }: { c: RecentCallView }) {
             </p>
           )}
           {c.result && (
-            <p className="mt-0.5 text-xs text-fg-dim">{RESULT_WORD[c.result]}</p>
+            <p className="mt-0.5 text-xs text-fg-dim">{RESULT_LABEL[c.result]}</p>
           )}
         </div>
       </Link>
