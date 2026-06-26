@@ -43,11 +43,6 @@ log = logging.getLogger(__name__)
 PUBLISH_LEAD = timedelta(days=1)
 # Pace api-football calls to stay under the free tier's ~10 requests/minute.
 DEFAULT_PACE_SECONDS = 7.0
-# The committed live production season (jobs/config.py's SEASON default). The dev
-# seeder back-dates predictions onto FINISHED fixtures — only ever valid for
-# disposable dev data — so it HARD-REFUSES this season unless explicitly overridden,
-# keeping fabricated rows off the real prediction ledger (docs/SEEDING.md).
-LIVE_SEASON = 2026
 
 
 def _backdated_publish(kickoff_utc: str) -> str:
@@ -69,7 +64,7 @@ def run(
     # only meaningful for disposable dev data; running it against the real season
     # would forge ledger history. A dev run sets WC_SEASON to a back-test season
     # (config.SEASON != LIVE_SEASON); override deliberately with --allow-live-season.
-    if config.SEASON == LIVE_SEASON and not allow_live:
+    if config.SEASON == config.LIVE_SEASON and not allow_live:
         raise SystemExit(
             f"refusing to seed the LIVE season {config.SEASON}: the dev seeder only "
             f"back-dates disposable dev data (see docs/SEEDING.md). Set WC_SEASON to a "
@@ -186,7 +181,7 @@ def main(argv: Optional[Sequence[str]] = None) -> dict:
         "--allow-live-season",
         action="store_true",
         help="Override the safety interlock and seed even when the configured season "
-        f"is the live default ({LIVE_SEASON}). Dev tooling only — never for live data.",
+        f"is the live default ({config.LIVE_SEASON}). Dev tooling only — never for live data.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
     args = parser.parse_args(argv)

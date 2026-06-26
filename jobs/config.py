@@ -59,9 +59,15 @@ def api_football_key() -> str:
 # league 1; WC_LEAGUE_ID overrides it (e.g. for a dev seed). See docs/SEEDING.md.
 TRACKED_LEAGUE_IDS: list[int] = [int(os.environ.get("WC_LEAGUE_ID") or "1")]
 
-# API-Football uses the start year for the season. LIVE default = FIFA World Cup
-# 2026; WC_SEASON overrides it (e.g. WC_SEASON=2022 for the Qatar dev seed).
-SEASON: int = int(os.environ.get("WC_SEASON") or "2026")
+# The live production season — the SINGLE SOURCE OF TRUTH for "which season is the
+# real tournament". It is the committed default for SEASON below, and the dev tools
+# (seed_predictions_dev, reset_season) key their safety interlocks on it so a stray
+# run can't touch the live ledger. FIFA World Cup 2026. (docs/SEEDING.md)
+LIVE_SEASON: int = 2026
+
+# API-Football uses the start year for the season. LIVE default = LIVE_SEASON (FIFA
+# World Cup 2026); WC_SEASON overrides it (e.g. WC_SEASON=2022 for the Qatar dev seed).
+SEASON: int = int(os.environ.get("WC_SEASON") or str(LIVE_SEASON))
 
 # Number of recent matches to summarise for "form" on team/match pages (§4).
 FORM_MATCH_COUNT: int = 5

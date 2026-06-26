@@ -8,8 +8,9 @@ the DB untouched"; the season-isolation and FK-order tests below prove it.
 
 import pytest
 
+from jobs.config import LIVE_SEASON
 from jobs.db import SupabaseStore
-from jobs.reset_season import LIVE_SEASON, run
+from jobs.reset_season import run
 
 
 def _season_dataset(*, season, league_id, base):

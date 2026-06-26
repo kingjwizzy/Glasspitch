@@ -14,7 +14,8 @@ from datetime import timedelta
 import pytest
 
 from jobs import config, elo, util
-from jobs.seed_predictions_dev import LIVE_SEASON, PUBLISH_LEAD, run
+from jobs.config import LIVE_SEASON
+from jobs.seed_predictions_dev import PUBLISH_LEAD, run
 
 NOOP_SLEEP = lambda _seconds: None  # noqa: E731 — keep tests off the 7s pacing clock
 
