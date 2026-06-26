@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import ProbabilityBar from '@/components/ProbabilityBar';
-import { LockClosedIcon, LockOpenIcon } from '@/components/icons';
+import LivePill from '@/components/LivePill';
+import LockStatusLine from '@/components/LockStatusLine';
 import { formatKickoff, scoreLine } from '@/lib/format';
 import type { FixtureView } from '@/lib/queries/homepage';
 
@@ -9,27 +10,9 @@ import type { FixtureView } from '@/lib/queries/homepage';
 // H/D/A call and predicted score. The "locked" framing is honest about state:
 // an upcoming prediction LOCKS at kickoff; only live/finished ones ARE locked.
 
-function LivePill() {
-  // Solid red with dark text clears AA (≈4.96:1); the red tint behind red text
-  // does not. The dot is decorative (the "Live" word carries the meaning).
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-xs font-semibold text-bg">
-      <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-bg opacity-60" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-bg" />
-      </span>
-      Live
-    </span>
-  );
-}
-
 export default function HeroMatch({ fixture }: { fixture: FixtureView }) {
   const isLive = fixture.status === 'live';
   const pred = fixture.prediction;
-  // Only a genuinely locked or scored prediction is immutable. A 'published'
-  // row still locks AT kickoff; void rows are filtered out upstream, but gate
-  // explicitly so the "can never be edited" claim is always true (§10 honesty).
-  const locked = pred ? pred.status === 'locked' || pred.status === 'scored' : false;
   const hasLiveScore =
     isLive && fixture.final_home_goals !== null && fixture.final_away_goals !== null;
 
@@ -84,19 +67,7 @@ export default function HeroMatch({ fixture }: { fixture: FixtureView }) {
             draw={pred.prob_draw}
             away={pred.prob_away}
           />
-          <p className="mt-3.5 flex items-center gap-1.5 text-xs text-fg-dim">
-            {locked ? (
-              <>
-                <LockClosedIcon className="h-3.5 w-3.5 text-green" />
-                Locked before kickoff — it can never be edited.
-              </>
-            ) : (
-              <>
-                <LockOpenIcon className="h-3.5 w-3.5" />
-                Locks at kickoff, then scored in the public ledger.
-              </>
-            )}
-          </p>
+          <LockStatusLine status={pred.status} className="mt-3.5" />
         </div>
       ) : (
         <p className="mt-5 text-sm text-fg-dim">
