@@ -1,41 +1,176 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import AdSlot from '@/components/AdSlot';
+import SectionHeader from '@/components/SectionHeader';
+import FixtureList from '@/components/FixtureList';
+import LedgerCallout from '@/components/match/LedgerCallout';
+import { getLeagueData, getAllLeagueSlugs } from '@/lib/queries/league';
+import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
+
+// SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so fixture
+// lists and record stats stay fresh with no per-visitor work. Never calls the
+// football API on the request path (§5 golden rule) — reads from Supabase only.
+// Unknown slugs render on demand and are cached once found; missing slugs → 404.
+export const revalidate = 600;
 
 interface LeaguePageProps {
   params: Promise<{ slug: string }>;
 }
 
-function slugToName(slug: string): string {
-  return slug
-    .split('-')
-    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
-    .join(' ');
+// Pre-render all known league slugs at build time; unknown slugs fall through
+// to on-demand ISR (dynamicParams defaults true). Returns [] on any error so
+// the build never fails.
+export async function generateStaticParams() {
+  return (await getAllLeagueSlugs()).map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({
   params,
 }: LeaguePageProps): Promise<Metadata> {
   const { slug } = await params;
-  const name = slugToName(slug);
-  // TODO(ARCHITECTURE.md §11): resolve the real league name from the DB by slug.
+  const data = await getLeagueData(slug);
+
+  if (!data) {
+    return {
+      title: 'League not found',
+      description:
+        'This league isn’t in our record. Browse the latest probabilities and the public track record on Glass Pitch.',
+      robots: { index: false, follow: true },
+      alternates: { canonical: `/league/${slug}` },
+    };
+  }
+
+  const { name, country, season } = data;
+  const title = `${name} — fixtures & probabilities`;
+  const description = `Upcoming and recent ${name} (${country}, ${season}) fixtures with home/draw/away probabilities and predicted scores. Analysis, not betting advice.`;
+
   return {
-    title: `${name} — fixtures & probabilities`,
-    description: `Upcoming ${name} fixtures with home/draw/away probabilities and predicted scores. Analysis, not betting advice.`,
+    title,
+    description,
     alternates: { canonical: `/league/${slug}` },
+    // openGraph fully replaces (not deep-merges) the layout's object, so the
+    // inherited siteName must be restated or the share card loses the brand.
+    openGraph: {
+      type: 'website',
+      siteName: SITE_NAME,
+      title,
+      description,
+      url: `/league/${slug}`,
+    },
+    twitter: { card: 'summary', title, description },
   };
+}
+
+/** Serialise JSON-LD for safe embedding in a <script> tag: escape the
+ *  characters that could otherwise break out of the element (defence in depth —
+ *  league/country names come from the jobs feed, never a visitor). */
+function jsonLdScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/&/g, '\\u0026')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e');
 }
 
 export default async function LeaguePage({ params }: LeaguePageProps) {
   const { slug } = await params;
-  const name = slugToName(slug);
-  // TODO(ARCHITECTURE.md §7, §8, §11): fetch the league by slug plus its
-  // fixtures list from Supabase and render <MatchCard>s. ISR (§11).
+  const data = await getLeagueData(slug);
+  if (!data) notFound();
+
+  const { name, country, season, upcoming, recent, record } = data;
+
+  // Minimal SportsEvent JSON-LD for the tournament — plain names only, no
+  // official marks, no odds (ARCHITECTURE.md §13). schema.org SportsEvent
+  // requires startDate, so derive it from the earliest fixture we hold and omit
+  // the block entirely when there are none (an incomplete SportsEvent earns no
+  // rich result anyway). Keeps the page zero-client-JS.
+  const startDate = [...upcoming, ...recent]
+    .map((f) => f.kickoff_utc)
+    .sort()[0];
+  const jsonLd = startDate
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'SportsEvent',
+        name,
+        sport: 'Association football',
+        startDate,
+        location: { '@type': 'Place', name: country },
+      }
+    : null;
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold tracking-tight">{name}</h1>
-      <p className="text-sm text-black/60 dark:text-white/60">
-        Fixtures and probabilities for {name} will appear here once the data
-        pipeline is connected.
+    <article className="space-y-8">
+      {jsonLd && (
+        <script
+          type="application/ld+json"
+          // JSON-LD is data for crawlers, not executable app JS — keeps the SEO
+          // surface rich while the page stays zero-client-JS (DESIGN.md §8).
+          dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
+        />
+      )}
+
+      <header>
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+          {name}
+        </h1>
+        <p className="mt-1 text-sm text-fg-dim">
+          {country} · {season}
+        </p>
+
+        {/* Record band — only rendered when scored predictions exist (§10, §13).
+            Mono figures for the numbers; honest "losses included" caveat;
+            text-green link drives traffic to the first-class ledger. */}
+        {record && record.scored > 0 && (
+          <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-line bg-surface-2 px-4 py-3">
+            <p className="text-xs leading-relaxed text-fg-dim">
+              <span className="font-mono text-fg">{record.hits}</span> of{' '}
+              <span className="font-mono text-fg">{record.scored}</span> calls
+              landed
+              {record.meanBrier !== null && (
+                <>
+                  {' '}
+                  — mean Brier{' '}
+                  <span className="font-mono text-fg">
+                    {record.meanBrier.toFixed(2)}
+                  </span>
+                </>
+              )}
+              . Losses included.
+            </p>
+            <Link
+              href="/ledger"
+              className="-my-2 inline-flex min-h-11 shrink-0 items-center gap-1 text-sm font-medium text-green transition-colors hover:text-green-bright"
+            >
+              See the full record
+            </Link>
+          </div>
+        )}
+      </header>
+
+      {/* Reserved ad slot — built-ready but renders nothing in v1 (§4, §13). */}
+      <AdSlot slot="league-top" />
+
+      <section aria-labelledby="upcoming-heading">
+        <SectionHeader id="upcoming-heading" title="Upcoming fixtures" />
+        <FixtureList
+          fixtures={upcoming}
+          emptyMessage="No upcoming fixtures right now — they'll appear here as soon as the next matches are scheduled."
+        />
+      </section>
+
+      <section aria-labelledby="results-heading">
+        <SectionHeader id="results-heading" title="Recent results" />
+        <FixtureList
+          fixtures={recent}
+          emptyMessage="No results in our record yet — predictions appear here once they're published and scored."
+        />
+      </section>
+
+      <LedgerCallout />
+
+      <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
+        {ANALYSIS_NOT_ADVICE}
       </p>
-    </div>
+    </article>
   );
 }
