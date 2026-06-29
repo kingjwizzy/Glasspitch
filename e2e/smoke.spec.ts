@@ -22,7 +22,7 @@ test('/ has correct landmark structure and data-state-independent semantics', as
   await page.goto('/', { waitUntil: 'load' });
 
   // Compliance: the disclaimer banner is present and carries the compliance text.
-  const banner = page.locator('[role="note"][aria-label="Compliance disclaimer"]');
+  const banner = page.locator('[role="region"][aria-label="Compliance disclaimer"]');
   await expect(banner).toBeVisible();
   await expect(banner).toContainText('not betting advice');
   await expect(banner).toContainText('18+');
