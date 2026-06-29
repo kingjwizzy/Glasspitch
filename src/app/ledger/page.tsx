@@ -5,7 +5,7 @@ import LedgerTable from '@/components/ledger/LedgerTable';
 import CalibrationTable from '@/components/ledger/CalibrationTable';
 import { getLedgerData } from '@/lib/queries/ledger';
 import { pct } from '@/lib/format';
-import { ANALYSIS_NOT_ADVICE, THIRD_PARTY_LABEL } from '@/lib/constants';
+import { ANALYSIS_NOT_ADVICE, SITE_NAME, THIRD_PARTY_LABEL } from '@/lib/constants';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so the record
 // refreshes as calls are scored, with no per-visitor work and — like every web
@@ -13,11 +13,24 @@ import { ANALYSIS_NOT_ADVICE, THIRD_PARTY_LABEL } from '@/lib/constants';
 // page reads only from Supabase. Metadata is static, so no generateMetadata/cache.
 export const revalidate = 600;
 
+const LEDGER_TITLE = 'Track record — the public prediction ledger';
+const LEDGER_DESCRIPTION =
+  'Every prediction, locked at kickoff and scored after full-time — wins and losses. Mean Brier score, log loss and calibration, with sample-size caveats.';
+
 export const metadata: Metadata = {
-  title: 'Track record — the public prediction ledger',
-  description:
-    'Every prediction, locked at kickoff and scored after full-time — wins and losses. Mean Brier score, log loss and calibration, with sample-size caveats.',
+  title: LEDGER_TITLE,
+  description: LEDGER_DESCRIPTION,
   alternates: { canonical: '/ledger' },
+  // Self-referential og:url + restated siteName (openGraph fully replaces the
+  // layout's object — ARCHITECTURE.md §11).
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    title: LEDGER_TITLE,
+    description: LEDGER_DESCRIPTION,
+    url: '/ledger',
+  },
+  twitter: { card: 'summary', title: LEDGER_TITLE, description: LEDGER_DESCRIPTION },
 };
 
 function fmt(value: number | null): string {

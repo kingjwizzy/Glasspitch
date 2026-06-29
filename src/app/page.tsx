@@ -8,12 +8,32 @@ import WhatWeAreWatching from '@/components/home/WhatWeAreWatching';
 import RecentCalls from '@/components/home/RecentCalls';
 import RecordBand from '@/components/home/RecordBand';
 import { getHomepageData } from '@/lib/queries/homepage';
+import { SITE_NAME } from '@/lib/constants';
+
+// `title.template` (`%s · Glass Pitch`, defined in the root layout) applies only
+// to CHILD segments, never to the home page itself — so the page needs an
+// explicit, branded title to match the "· Glass Pitch" pattern the other routes
+// get for free. `absolute` bypasses the template (belt-and-braces against any
+// double-suffix). (ARCHITECTURE.md §11)
+const HOME_TITLE = `Transparent football analysis · ${SITE_NAME}`;
+const HOME_DESCRIPTION =
+  'Home, draw and away probabilities and predicted scores for upcoming matches — analysis, not advice. Every call is locked at kickoff and scored in a permanent public ledger.';
 
 export const metadata: Metadata = {
-  title: 'Transparent football analysis',
-  description:
-    'Home, draw and away probabilities and predicted scores for upcoming matches — analysis, not advice. Every call is locked at kickoff and scored in a permanent public ledger.',
+  title: { absolute: HOME_TITLE },
+  description: HOME_DESCRIPTION,
   alternates: { canonical: '/' },
+  // Self-referential og:url (resolved against metadataBase). openGraph fully
+  // replaces the layout's object, so siteName must be restated or the share
+  // card loses the brand. (ARCHITECTURE.md §11)
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    title: HOME_TITLE,
+    description: HOME_DESCRIPTION,
+    url: '/',
+  },
+  twitter: { card: 'summary', title: HOME_TITLE, description: HOME_DESCRIPTION },
 };
 
 // ISR: the page re-renders at most every 10 minutes — matchday-fresh without any
