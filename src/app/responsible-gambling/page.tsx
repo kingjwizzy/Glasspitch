@@ -1,11 +1,24 @@
 import type { Metadata } from 'next';
-import { RESPONSIBLE_GAMBLING } from '@/lib/constants';
+import { RESPONSIBLE_GAMBLING, SITE_NAME } from '@/lib/constants';
+
+const RG_TITLE = 'Responsible gambling & support';
+const RG_DESCRIPTION =
+  '18+. Glass Pitch is analysis, not betting advice. If gambling stops being fun, find support and self-exclusion resources here.';
 
 export const metadata: Metadata = {
-  title: 'Responsible gambling & support',
-  description:
-    '18+. Glass Pitch is analysis, not betting advice. If gambling stops being fun, find support and self-exclusion resources here.',
+  title: RG_TITLE,
+  description: RG_DESCRIPTION,
   alternates: { canonical: '/responsible-gambling' },
+  // Self-referential og:url + restated siteName (openGraph fully replaces the
+  // layout's object — ARCHITECTURE.md §11).
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    title: RG_TITLE,
+    description: RG_DESCRIPTION,
+    url: '/responsible-gambling',
+  },
+  twitter: { card: 'summary', title: RG_TITLE, description: RG_DESCRIPTION },
 };
 
 export default function ResponsibleGamblingPage() {

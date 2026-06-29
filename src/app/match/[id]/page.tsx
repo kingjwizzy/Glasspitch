@@ -21,6 +21,18 @@ interface MatchPageProps {
   params: Promise<{ id: string }>;
 }
 
+// Opt the dynamic [id] segment into on-demand ISR: returning an empty list
+// pre-renders no ids at build, but every visited id is rendered once and then
+// served from the full-route cache (dynamicParams defaults true). Without this,
+// the segment is rendered per-request (no-store) on every hit; with it, the
+// first hit on a fresh id populates the cache and subsequent hits are cache
+// HITs — same matchday freshness via `revalidate`, a fraction of the TTFB. We
+// deliberately do NOT use `dynamic = 'force-static'`, which would drop the
+// dynamic params entirely. (ARCHITECTURE.md §11)
+export function generateStaticParams() {
+  return [];
+}
+
 function parseId(raw: string): number {
   // Bare integer ids only (the route is /match/[id]); anything else → 404.
   return /^\d+$/.test(raw) ? Number(raw) : NaN;
@@ -140,6 +152,8 @@ export default async function MatchPage({ params }: MatchPageProps) {
         league={data.league}
         home={data.home}
         away={data.away}
+        homeSlug={data.homeSlug}
+        awaySlug={data.awaySlug}
         kickoffUtc={data.kickoff_utc}
         status={data.status}
         finalHome={data.final_home_goals}

@@ -45,7 +45,10 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     title: `${SITE_NAME} — transparent football analysis`,
     description: DEFAULT_DESCRIPTION,
-    url: '/',
+    // No default `url` here on purpose: a hardcoded og:url would be inherited by
+    // every page that does not set its own openGraph, pointing all of their
+    // share cards at the homepage. Each route declares its own self-referential
+    // og:url instead (resolved against metadataBase). (ARCHITECTURE.md §11)
   },
   twitter: {
     // TODO(ARCHITECTURE.md §11): add a default OG/social image

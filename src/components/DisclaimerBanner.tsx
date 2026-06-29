@@ -7,7 +7,7 @@ import { DISCLAIMER } from '@/lib/constants';
 export default function DisclaimerBanner() {
   return (
     <div
-      role="note"
+      role="region"
       aria-label="Compliance disclaimer"
       className="border-b border-line bg-surface-2"
     >

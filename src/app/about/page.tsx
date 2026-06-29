@@ -1,11 +1,25 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { SITE_NAME } from '@/lib/constants';
+
+const ABOUT_TITLE = 'About — analysis, not advice';
+const ABOUT_DESCRIPTION =
+  'What Glass Pitch is, how the probabilities are produced, and why we publish a permanent, losses-visible track record instead of asserting one.';
 
 export const metadata: Metadata = {
-  title: 'About — analysis, not advice',
-  description:
-    'What Glass Pitch is, how the probabilities are produced, and why we publish a permanent, losses-visible track record instead of asserting one.',
+  title: ABOUT_TITLE,
+  description: ABOUT_DESCRIPTION,
   alternates: { canonical: '/about' },
+  // Self-referential og:url + restated siteName (openGraph fully replaces the
+  // layout's object — ARCHITECTURE.md §11).
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    title: ABOUT_TITLE,
+    description: ABOUT_DESCRIPTION,
+    url: '/about',
+  },
+  twitter: { card: 'summary', title: ABOUT_TITLE, description: ABOUT_DESCRIPTION },
 };
 
 export default function AboutPage() {
