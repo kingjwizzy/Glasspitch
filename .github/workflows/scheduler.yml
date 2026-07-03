@@ -44,6 +44,33 @@ name: Jobs scheduler
 #                                   snapshots. Public data (Gameweek Board /
 #                                   Fixture Ticker). DB-only — makes NO
 #                                   football-API call.
+#   simulate_chances   06:30 + 22:15 — "World Cup Chances" (ROADMAP.md §4 item
+#                                   7, migration 0007). Monte Carlo simulation
+#                                   of the remaining knockout bracket
+#                                   (config.MONTE_CARLO_SIMS trials, default
+#                                   10,000) into tournament_chances. TWO runs/
+#                                   day (not one, unlike the other daily jobs)
+#                                   so the homepage "chances circles" move
+#                                   same-day as results land during the World
+#                                   Cup — 06:30 catches the morning/UK-evening
+#                                   kickoff block, 22:15 catches the US-evening
+#                                   block, both scheduled comfortably after
+#                                   score_results (every 20m) and
+#                                   fetch_fixtures (every 6h) have had time to
+#                                   land that window's finished results and
+#                                   round pairings first. DB-only — makes NO
+#                                   football-API call.
+#   ledger_integrity   daily 03:30 — "Ledger integrity ops" (ROADMAP.md §4
+#                                   item 5, migration 0007). Nightly private
+#                                   full-table backup export (Supabase
+#                                   Storage, bucket config.LEDGER_BACKUPS_
+#                                   BUCKET) + a publicly-verifiable SHA-256
+#                                   hash chain over the scored ledger, upserted
+#                                   into ledger_checkpoints. Scheduled BEFORE
+#                                   snapshot_probabilities/fetch_fixtures'
+#                                   first sweep of the day so it backs up
+#                                   yesterday's fully-settled state. DB +
+#                                   Storage only — makes NO football-API call.
 #   keepalive          monthly    — pushes a heartbeat commit so the REPO never
 #                                   goes 60 days without activity, which is what
 #                                   triggers GitHub's automatic disabling of
@@ -68,10 +95,13 @@ name: Jobs scheduler
 #   fetch_topscorers   1 run/day x 1 tracked league           =  1 req/day
 #   score_user_predictions 72 runs x 0 requests (DB-only)     =  0 req/day
 #   snapshot_probabilities  1 run/day x 0 requests (DB-only)  =  0 req/day
+#   simulate_chances    2 runs/day x 0 requests (DB-only)     =  0 req/day
+#   ledger_integrity     1 run/day x 0 requests (DB + Storage only) = 0 req/day
 #   keepalive           ~1 run/month x 0 requests            =  0 req/day
 #   Worst realistic day comfortably under 20 req; the per-run
-#   MAX_REQUESTS_PER_RUN guard caps any one run regardless. Neither new v3 W5
-#   job ever touches the request budget -- both are pure DB reads/writes.
+#   MAX_REQUESTS_PER_RUN guard caps any one run regardless. None of the v3
+#   W5/W7 jobs ever touch the request budget -- all are pure DB (+ Storage,
+#   for ledger_integrity) reads/writes, never the football API.
 #
 # All writes are idempotent (upserts keyed on api_* ids; predictions fetched
 # once), so every job is safe to re-run and safe to overlap-skip (§5, §8).
@@ -100,6 +130,8 @@ on:
           - fetch_topscorers
           - score_user_predictions
           - snapshot_probabilities
+          - simulate_chances
+          - ledger_integrity
           - keepalive
       dry_run:
         description: 'Dry run — no DB writes. NOTE: fetch_* still call the football API (counts against the 100/day budget).'
@@ -114,18 +146,25 @@ on:
   # one job through that job's `if:` guard (github.event.schedule == '<cron>').
   # Do NOT change the cron strings without updating the matching `if:` guards.
   schedule:
-    - cron: '0 */6 * * *'    # fetch_fixtures     — every 6h
+    - cron: '*/15 * * * *'   # fetch_fixtures     — every 15 min (status poll; 96 req/day, trivial on the Pro plan — the 6h cadence froze live statuses for hours on 2026-07-03)
     - cron: '15 6 * * *'     # fetch_predictions  — daily 06:15 UTC
     - cron: '45 */6 * * *'   # fetch_insights     — every 6h at :45 (post-match stats, after score_results)
     - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
     - cron: '*/20 * * * *'   # score_results      — every 20 min
     - cron: '30 7 * * *'     # fetch_topscorers   — daily 07:30 UTC
     - cron: '45 5 * * *'     # snapshot_probabilities — daily 05:45 UTC
+    - cron: '30 3 * * *'     # ledger_integrity   — daily 03:30 UTC
+    - cron: '30 6 * * *'     # simulate_chances   — daily 06:30 UTC (morning run)
+    - cron: '15 22 * * *'    # simulate_chances   — daily 22:15 UTC (evening run, same job)
     - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
     # score_user_predictions has NO cron entry of its own -- it piggybacks on
     # the EXISTING '*/20 * * * *' entry above (score_results' schedule), via
     # its own `if:` guard below. Adding a second identical cron string would
     # double-fire that time slot.
+    # simulate_chances is the ONE job with TWO cron entries of its own (see
+    # the pipeline comment above for why) -- its `if:` guard below matches
+    # EITHER string; each fires the SAME job block once, not two overlapping
+    # runs (a 6h30-to-22h15 gap comfortably clears the concurrency lock).
 
 # Least privilege: the jobs only read the checked-out repo and talk to Supabase /
 # the football API over the network. They never write back to the repo (the
@@ -148,7 +187,7 @@ jobs:
     # Manual: when job == all | fetch_fixtures. Scheduled: its own cron string.
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_fixtures')) ||
-      github.event.schedule == '0 */6 * * *'
+      github.event.schedule == '*/15 * * * *'
     permissions:
       contents: read
       issues: write
@@ -509,6 +548,112 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_NAME: snapshot_probabilities
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- daily 03:30: ledger integrity ops (DB + Storage only, no API) ---------
+  # ROADMAP.md §4 item 5, migration 0007 -- nightly private full-table backup
+  # export (Supabase Storage, config.LEDGER_BACKUPS_BUCKET) + the public
+  # SHA-256 hash chain over the scored ledger (ledger_checkpoints). Scheduled
+  # BEFORE snapshot_probabilities (05:45) and fetch_fixtures' first sweep of
+  # the day so it backs up yesterday's fully-settled state.
+  ledger_integrity:
+    name: ledger_integrity (backups + hash chain)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: glasspitch-scheduler-ledger_integrity
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'ledger_integrity')) ||
+      github.event.schedule == '30 3 * * *'
+    permissions:
+      contents: read
+      issues: write
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads +
+    # Supabase Storage writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run ledger_integrity
+        run: python -m jobs.ledger_integrity ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: ledger_integrity
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- 06:30 + 22:15: World Cup Chances Monte Carlo sim (DB-only, no API) ----
+  # ROADMAP.md §4 item 7, migration 0007 -- simulates the remaining knockout
+  # bracket into tournament_chances. TWO runs/day (see the pipeline comment at
+  # the top of this file for why) via TWO cron entries sharing this ONE job
+  # block + `if:` guard; a 6h30-to-22h15 gap comfortably clears the
+  # concurrency lock so the two runs never overlap.
+  simulate_chances:
+    name: simulate_chances (World Cup Chances)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: glasspitch-scheduler-simulate_chances
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'simulate_chances')) ||
+      github.event.schedule == '30 6 * * *' ||
+      github.event.schedule == '15 22 * * *'
+    permissions:
+      contents: read
+      issues: write
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run simulate_chances
+        run: python -m jobs.simulate_chances ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: simulate_chances
         run: |
           set -euo pipefail
           TITLE="[scheduler] ${JOB_NAME} failed"

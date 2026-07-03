@@ -28,10 +28,10 @@ RPC in a `finally` block, using a season number unique to that test run (see
 `_isolated_season`), so repeated runs against a persistent (non-CI) project
 never accumulate garbage and never collide with concurrent runs.
 
-These tests assume migrations 0001 -> 0006 are ALREADY applied to the target
+These tests assume migrations 0001 -> 0007 are ALREADY applied to the target
 FROM SCRATCH (CI's `supabase db reset` step does this before invoking `pytest
 -m integration` -- it replays every file in supabase/migrations/ in order, so
-0006 is included automatically with no CI change needed; a developer running
+0007 is included automatically with no CI change needed; a developer running
 this locally runs the same via the Supabase CLI). We don't re-apply the
 migration files ourselves -- instead, every 0003-introduced object/behaviour
 (job_runs, 'void_cancelled', the DELETE guard, the extended freeze,
@@ -39,14 +39,24 @@ teardown_season), every 0004-introduced object/behaviour
 (`profiles`/`subscriptions`/`stripe_events`/`fixture_insights`,
 `handle_new_user()`, `public.is_premium()`, and their RLS), 0005's
 `public.top_scorers` (public data, NOT premium -- anon/authenticated get a
-real SELECT, only service_role writes), AND every 0006-introduced
+real SELECT, only service_role writes), every 0006-introduced
 object/behaviour (`pools`/`pool_members`/`user_predictions` with their
 owner-scoped RLS, the kickoff write-window trigger, the scoring-field column
 grants, `public.join_pool()`/`public.is_pool_member()`, plus the two public
 jobs-written read surfaces `fixture_pick_aggregates`/
-`team_probability_snapshots`) is exercised directly, so a schema that DIDN'T
-migrate cleanly to 0006 fails these tests immediately (table/column/function/
-policy would not exist) rather than silently no-op'ing.
+`team_probability_snapshots`), AND every 0007-introduced object/behaviour
+(`tournament_chances`/`ledger_checkpoints` as public jobs-written read
+surfaces, `email_subscribers` with its stripe_events-style zero-access
+posture, and the `fixtures.round`/`api_round`/`winner_team_id` columns) is
+exercised directly, so a schema that DIDN'T migrate cleanly to 0007 fails
+these tests immediately (table/column/function/policy would not exist)
+rather than silently no-op'ing.
+
+0007 additions follow the established cleanup routes: `tournament_chances`
+rows disappear with their team via `on delete cascade` when `teardown_season`
+deletes the seeded teams; `ledger_checkpoints` and `email_subscribers` rows
+(no FK into the game data) are deleted explicitly by the service-role client
+in each test's `finally` block, keyed on values unique to that test run.
 
 v2 premium (0004) additions to this file create REAL `auth.users` rows via the
 service-role client's `auth.admin.create_user()`/`delete_user()` (the local
@@ -75,7 +85,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from urllib.parse import urlparse
 
 import pytest
@@ -1274,3 +1284,240 @@ def test_join_pool_joins_by_code_and_rejects_bad_codes(real_store):
         # FK) -> pool_members, so no game-table row survives this cleanup.
         real_store._client.auth.admin.delete_user(owner_id)
         real_store._client.auth.admin.delete_user(joiner_id)
+
+
+# ==============================================================================
+# migration 0007: tournament_chances + ledger_checkpoints (public, jobs-written
+# read surfaces -- same access class as top_scorers) and email_subscribers
+# (the server-only email-capture writer's table -- ZERO anon/authenticated
+# access, mirroring stripe_events), plus the fixtures.round / api_round /
+# winner_team_id columns jobs/simulate_chances.py's bracket progression reads.
+# ==============================================================================
+
+
+def _unique_checkpoint_day(isolated_season) -> str:
+    """A calendar day unique to this test run (ledger_checkpoints.day is
+    UNIQUE) -- derived from the run's isolated_season and parked far in the
+    future so it can never collide with the nightly job's real rows."""
+    return (date(2100, 1, 1) + timedelta(days=isolated_season - 900_000)).isoformat()
+
+
+@requires_real_db
+def test_migration_0007_objects_are_present(real_store):
+    """Proves 0001->0007 applied: none of the three new tables nor the three
+    new fixtures columns existed before this migration -- a schema that
+    didn't migrate cleanly to 0007 fails here immediately."""
+    for table in ("tournament_chances", "email_subscribers", "ledger_checkpoints"):
+        # service_role bypasses RLS -- this only proves the table/columns exist.
+        real_store._client.table(table).select("*").limit(1).execute()
+
+    # The 0007 fixtures columns exist (selecting a missing column errors).
+    real_store._client.table("fixtures").select(
+        "round, api_round, winner_team_id"
+    ).limit(1).execute()
+
+
+@requires_real_db
+def test_anon_reads_chances_and_checkpoints_but_never_writes(
+    real_store, isolated_season
+):
+    """The two public 0007 read surfaces behave exactly like top_scorers:
+    anon gets a genuine, POPULATED SELECT (not merely an empty result), and
+    every write path stays denied."""
+    anon_client = _anon_client_or_skip()
+
+    league_id = real_store.upsert_league(
+        api_league_id=isolated_season, name=f"Integration League {isolated_season}",
+        slug=f"integration-league-{isolated_season}", country="Testland",
+        season=isolated_season,
+    )
+    team_id = real_store.upsert_team(
+        api_team_id=isolated_season * 10 + 1, name="Integration Chances FC",
+        slug=f"integration-chances-{isolated_season}", league_id=league_id,
+    )
+    today = util.now_utc().date().isoformat()
+    checkpoint_day = _unique_checkpoint_day(isolated_season)
+    try:
+        # The jobs (service role) publish both surfaces...
+        written = real_store.upsert_tournament_chances(
+            [
+                {
+                    "snapshot_date": today, "team_id": team_id,
+                    "p_win_tournament": 0.42, "p_reach_final": 0.61,
+                    "p_reach_semi": 0.83, "sims": 10_000,
+                }
+            ]
+        )
+        assert written == 1
+        real_store.upsert_ledger_checkpoint(
+            day=checkpoint_day, scored_rows=3, chain_hash="a" * 64, prev_hash=None,
+        )
+
+        # ...and anon genuinely reads them (populated, not merely empty).
+        chances = (
+            anon_client.table("tournament_chances")
+            .select("*")
+            .eq("team_id", team_id)
+            .execute()
+            .data
+        )
+        assert len(chances) == 1
+        assert float(chances[0]["p_win_tournament"]) == pytest.approx(0.42)
+        assert chances[0]["sims"] == 10_000
+
+        checkpoints = (
+            anon_client.table("ledger_checkpoints")
+            .select("*")
+            .eq("day", checkpoint_day)
+            .execute()
+            .data
+        )
+        assert len(checkpoints) == 1
+        assert checkpoints[0]["chain_hash"] == "a" * 64
+        assert checkpoints[0]["scored_rows"] == 3
+
+        # But anon never writes either surface.
+        with pytest.raises(Exception):
+            anon_client.table("tournament_chances").insert(
+                {
+                    "snapshot_date": today, "team_id": team_id,
+                    "p_win_tournament": 0.99, "sims": 1,
+                }
+            ).execute()
+        with pytest.raises(Exception):
+            anon_client.table("tournament_chances").update(
+                {"p_win_tournament": 0.99}
+            ).eq("team_id", team_id).execute()
+        with pytest.raises(Exception):
+            anon_client.table("ledger_checkpoints").update(
+                {"chain_hash": "b" * 64}
+            ).eq("day", checkpoint_day).execute()
+        with pytest.raises(Exception):
+            anon_client.table("ledger_checkpoints").delete().eq(
+                "day", checkpoint_day
+            ).execute()
+
+        # The tampering attempts really were blocked, not silently no-op'd.
+        untouched = (
+            real_store._client.table("ledger_checkpoints")
+            .select("chain_hash")
+            .eq("day", checkpoint_day)
+            .execute()
+            .data
+        )
+        assert untouched[0]["chain_hash"] == "a" * 64
+    finally:
+        # tournament_chances cascades away with its team; checkpoints have no
+        # FK into the game data, so delete this run's unique day explicitly.
+        real_store._client.table("ledger_checkpoints").delete().eq(
+            "day", checkpoint_day
+        ).execute()
+        real_store.teardown_season(isolated_season)
+
+
+@requires_real_db
+def test_email_subscribers_zero_access_except_service_role(real_store):
+    """email_subscribers mirrors stripe_events' posture exactly: anon AND
+    authenticated get NOTHING (not even SELECT -- every access raises, never
+    an empty result), while the service role (standing in for the server-only
+    email-capture route handler) can write and read back, with the
+    double-opt-in defaults and the email-shape CHECK enforced."""
+    anon_key = _require_anon_key()
+    url, _key = _TARGET
+    anon_client = create_client(url, anon_key)
+
+    subscriber_email = f"integration-subscriber-{uuid.uuid4().hex}@example.test"
+
+    email = _new_test_email("email-capture")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    try:
+        user_client = _signed_in_client(anon_key, email=email, password=password)
+
+        for client in (anon_client, user_client):
+            with pytest.raises(Exception):
+                client.table("email_subscribers").select("*").execute()
+            with pytest.raises(Exception):
+                client.table("email_subscribers").insert(
+                    {"email": f"blocked-{uuid.uuid4().hex}@example.test"}
+                ).execute()
+            with pytest.raises(Exception):
+                client.table("email_subscribers").update(
+                    {"confirmed_at": util.now_utc().isoformat()}
+                ).eq("email", subscriber_email).execute()
+
+        # The service role writes; the double-opt-in defaults come back real.
+        inserted = (
+            real_store._client.table("email_subscribers")
+            .insert({"email": subscriber_email})
+            .execute()
+            .data[0]
+        )
+        assert inserted["confirm_token"] and inserted["unsubscribe_token"]
+        assert inserted["confirmed_at"] is None  # not confirmed until the link is clicked
+        assert inserted["consented_at"] is not None
+
+        # UNIQUE(email): a duplicate signup errors instead of duplicating.
+        with pytest.raises(Exception):
+            real_store._client.table("email_subscribers").insert(
+                {"email": subscriber_email}
+            ).execute()
+        # CHECK: a value without a plausible @ is rejected even for service role.
+        with pytest.raises(Exception):
+            real_store._client.table("email_subscribers").insert(
+                {"email": "not-an-email"}
+            ).execute()
+    finally:
+        real_store._client.table("email_subscribers").delete().eq(
+            "email", subscriber_email
+        ).execute()
+        real_store._client.auth.admin.delete_user(user_id)
+
+
+@requires_real_db
+def test_tournament_chances_check_constraints_reject_bad_rows(
+    real_store, isolated_season
+):
+    """The 0007 defense-in-depth CHECKs hold on the real table: probabilities
+    outside [0, 1] and a non-positive sims count are rejected even for the
+    service role."""
+    league_id = real_store.upsert_league(
+        api_league_id=isolated_season, name=f"Integration League {isolated_season}",
+        slug=f"integration-league-{isolated_season}", country="Testland",
+        season=isolated_season,
+    )
+    team_id = real_store.upsert_team(
+        api_team_id=isolated_season * 10 + 1, name="Integration Checks FC",
+        slug=f"integration-checks-{isolated_season}", league_id=league_id,
+    )
+    today = util.now_utc().date().isoformat()
+    base = {
+        "snapshot_date": today, "team_id": team_id,
+        "p_win_tournament": 0.5, "p_reach_final": 0.6, "p_reach_semi": 0.7,
+        "sims": 100,
+    }
+    try:
+        for bad in (
+            {"p_win_tournament": 1.5},
+            {"p_win_tournament": -0.1},
+            {"p_reach_final": 1.5},
+            {"p_reach_semi": -0.1},
+            {"sims": 0},
+        ):
+            with pytest.raises(Exception):
+                real_store._client.table("tournament_chances").insert(
+                    {**base, **bad}
+                ).execute()
+
+        # And the well-formed row still lands (the CHECKs aren't over-tight).
+        real_store._client.table("tournament_chances").insert(base).execute()
+        rows = (
+            real_store._client.table("tournament_chances")
+            .select("p_win_tournament")
+            .eq("team_id", team_id)
+            .execute()
+            .data
+        )
+        assert len(rows) == 1
+    finally:
+        real_store.teardown_season(isolated_season)

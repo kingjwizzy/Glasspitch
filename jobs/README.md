@@ -21,7 +21,7 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `util.py` | `slugify`, UTC datetime helpers. |
 | `scoring.py` | Multiclass Brier score + clipped log loss (§10). |
 | `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9); v3 W5 adds `expected_goals`/`clean_sheet_probability`/`team_snapshot_metrics` (Poisson clean-sheet + continuous expected-goals estimates for `snapshot_probabilities.py`). |
-| `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). |
+| `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). Also normalises + stores each fixture's `round`/`api_round` and its `winner_team_id` (migration 0007) — see below. |
 | `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. |
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
 | `score_results.py` | **Frequent around match end.** Scores the self-draining `locked` set via `scoring.py` (§8.4, §10). |
@@ -29,6 +29,8 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `fetch_topscorers.py` | **New (daily, e.g. 07:30 UTC).** One `/players/topscorers` fetch per tracked league; top 15 by rank, idempotent full-replace into `top_scorers` (migration 0005). **Public** data — same access class as `leagues`/`teams`/`fixtures`, not premium. |
 | `score_user_predictions.py` | **v3 W5, new (every ~20 min).** DB-only, no API call. Scores locked "Beat the Model" user picks (`user_predictions`) via the same `scoring.brier_score` as the ledger, service-role-only; also publishes `fixture_pick_aggregates` (crowd-vs-model, no PII) for any newly-locked fixture with picks (migration 0006, ARCHITECTURE.md v3 §5). |
 | `snapshot_probabilities.py` | **v3 W5, new (nightly, e.g. 05:45 UTC).** DB-only, no API call. Per-team Elo-derived win/draw/loss, clean-sheet, and expected-goals snapshots for upcoming fixtures + day-over-day deltas, into `team_probability_snapshots` (migration 0006). **Public** data — powers the free Gameweek Board / Fixture Ticker, same access class as `top_scorers`. |
+| `simulate_chances.py` | **v3 W7, new ("World Cup Chances", 06:30 + 22:15 UTC).** DB-only, no API call. Monte Carlo simulation (`config.MONTE_CARLO_SIMS`, default 10,000) of the remaining knockout bracket (`config.KNOCKOUT_ROUND_ORDER`), writing one `tournament_chances` row per surviving team per day (migration 0007, ROADMAP.md §4 item 7). **Public** data, same access class as `top_scorers`. |
+| `ledger_integrity.py` | **v3, new ("Ledger integrity ops", nightly 03:30 UTC).** DB + Supabase Storage only, no API call. Nightly private full-table backup export (bucket `config.LEDGER_BACKUPS_BUCKET`, get-or-create + verified non-public every run) + a publicly-verifiable SHA-256 hash chain over the scored ledger, upserted into `ledger_checkpoints` (migration 0007, ROADMAP.md §4 item 5). |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
 
@@ -46,7 +48,15 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   `locked_at`. A fixture that turns out cancelled/abandoned, or has sat
   `postponed` past `config.POSTPONED_VOID_HORIZON_DAYS` with no reschedule, has
   its still-open predictions closed out as `void_cancelled` — no ledger row is
-  left in permanent limbo.
+  left in permanent limbo. Also normalises the raw `league.round` string
+  (`normalize_round()` — confirmed live against both the in-progress WC 2026
+  season and the completed 2022 season for the full knockout ladder) into
+  `fixtures.round`, keeps the raw value in `fixtures.api_round`, and stores
+  `fixtures.winner_team_id` from the API's own `teams.home/away.winner` flag
+  — the DEFINITIVE match winner, not derivable from the final score alone for
+  a match decided by extra time/penalties (migration 0007; feeds
+  `simulate_chances`' bracket progression, at zero extra API cost since it's
+  the SAME `/fixtures` payload already being fetched).
 - **`fetch_predictions`** — for each fixture kicking off within
   `config.PREDICTION_FETCH_WINDOW_HOURS` (default 72h) with no `api-football`
   prediction yet: `GET /predictions?fixture={id}` **exactly once**, parse the
@@ -121,6 +131,48 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   per run against a single bulk read of yesterday's snapshot set. Public data,
   same access class as `top_scorers` — powers the free Gameweek Board /
   Fixture Ticker.
+- **`simulate_chances`** (v3 W7, 06:30 + 22:15 UTC) — DB-only, no API call.
+  Reads every fixture whose normalised `round` (see `fetch_fixtures` below)
+  is in `config.KNOCKOUT_ROUND_ORDER` (`['Round of 32', 'Round of 16',
+  'Quarter-finals', 'Semi-finals', 'Final']`), scoped to the tracked
+  league(s)/season. Runs `config.MONTE_CARLO_SIMS` (default 10,000)
+  independent trials, each resolving the ENTIRE remaining bracket in one
+  pass: an already-`finished` fixture uses its TRUE outcome
+  (`fixtures.winner_team_id`, migration 0007 — correctly captures a match
+  decided by extra time/penalties, unlike the final score alone); a
+  not-yet-played KNOWN fixture samples from its stored `api-football`
+  prediction if one exists, else this job's own Elo-derived probability; a
+  round-slot the data provider hasn't published yet is filled in by pairing
+  that round's un-paired survivors ourselves, in kickoff order (a documented
+  approximation of the true FIFA bracket — see the module docstring's
+  "Bracket-derivation convention"). A sampled knockout draw is resolved by a
+  strength-weighted coin (the "extra time/penalties" convention — see the
+  module docstring). Writes one `tournament_chances` row per SURVIVING team
+  (every knockout participant minus anyone already eliminated by a finished
+  match — ground truth, never simulated) per day, upserted on the table's
+  `(snapshot_date, team_id)` PK (migration 0007). Deterministic with a fixed
+  `seed=` kwarg (tests); the live default draws from system entropy. Public
+  data, same access class as `top_scorers`. **Known v1 limitation:** assumes
+  its earliest present knockout round is already fully populated with real
+  fixtures — group-stage-to-knockout qualification is not itself simulated
+  (see the module docstring).
+- **`ledger_integrity`** (v3, nightly 03:30 UTC) — DB + Supabase Storage
+  only, no API call. Two independent passes: (1) full-table JSON snapshots of
+  `ledger_integrity.BACKUP_TABLES` (football data + the public/game-derived
+  surface — deliberately excludes personal/billing tables, which already
+  have their own systems of record) written to the PRIVATE `ledger-backups`
+  Storage bucket (`config.LEDGER_BACKUPS_BUCKET`), created idempotently and
+  verified non-public every run (`SupabaseStore.ensure_private_backup_bucket`
+  — raises loudly rather than silently exporting into a bucket that turned
+  out public); (2) every `status='scored'` prediction, ordered by
+  `(scored_at, id)`, is folded into a SHA-256 hash chain
+  (`chain_hash_i = sha256(chain_hash_{i-1} + canonical_json(row_i))`,
+  recomputed FRESH from the full scored set every run — safe because scored
+  rows are frozen by the migration 0001/0003 immutability trigger), and
+  today's tip is upserted into `ledger_checkpoints` (migration 0007) — the
+  public, anon-readable verifiability artifact a third party can use to
+  confirm the ledger was never rewritten, reproducible from `public.predictions`
+  alone (see the module docstring's exact canonicalisation rule).
 
 ## `--dry-run`
 
@@ -146,8 +198,10 @@ cp jobs/.env.example jobs/.env             # then fill in the values (never comm
 | Variable | What it is |
 |---|---|
 | `SUPABASE_URL` | Your Supabase project URL (e.g. `https://YOUR-REF.supabase.co`). |
-| `SUPABASE_SECRET_KEY` | **Secret.** Supabase secret key (`sb_secret_…`) — bypasses RLS; server-side only. |
+| `SUPABASE_SECRET_KEY` | **Secret.** Supabase secret key (`sb_secret_…`) — bypasses RLS; server-side only. Also used for Supabase Storage (`ledger_integrity.py`'s backup export) — the same secret-key client, no separate credential. |
 | `API_FOOTBALL_KEY` | **Secret.** API-Football (API-Sports) key. |
+| `MONTE_CARLO_SIMS` | *Optional.* Trial count for `simulate_chances.py`. Default `10000`. |
+| `LEDGER_BACKUPS_BUCKET` | *Optional.* Private Storage bucket name for `ledger_integrity.py`'s backup export. Default `ledger-backups`. |
 
 ## Running (from the repo root)
 
@@ -161,6 +215,8 @@ python -m jobs.fetch_insights --dry-run
 python -m jobs.fetch_topscorers --dry-run
 python -m jobs.score_user_predictions --dry-run   # DB-only — no API call either way
 python -m jobs.snapshot_probabilities --dry-run    # DB-only — no API call either way
+python -m jobs.simulate_chances --dry-run          # DB-only — no API call either way
+python -m jobs.ledger_integrity --dry-run          # DB + Storage only — no API call either way (dry-run skips both writes)
 
 # for real (writes to the DB)
 python -m jobs.fetch_fixtures        # daily
@@ -171,6 +227,8 @@ python -m jobs.fetch_insights        # v2 — every ~30-60 min (suggested; not y
 python -m jobs.fetch_topscorers      # daily (scheduler.yml: 07:30 UTC)
 python -m jobs.score_user_predictions # v3 W5 — every ~20 min (scheduler.yml)
 python -m jobs.snapshot_probabilities # v3 W5 — nightly (scheduler.yml: 05:45 UTC)
+python -m jobs.simulate_chances       # v3 W7 — twice daily (scheduler.yml: 06:30 + 22:15 UTC)
+python -m jobs.ledger_integrity       # v3 — nightly (scheduler.yml: 03:30 UTC)
 ```
 
 Add `-v` for debug logging. Writes are idempotent (keyed on the `api_*` ids), so
@@ -189,7 +247,10 @@ requests and a per-run guard (`MAX_REQUESTS_PER_RUN`, default 100) refuses to
 exceed the budget within a single run; the daily total stays low by the
 fetch-once design, not by cross-run accounting. Each job's summary logs
 `api_requests` so you can see how much budget a run (including `--dry-run`) spent.
-The website never calls the API.
+The website never calls the API. `simulate_chances.py` and `ledger_integrity.py`
+are DB-only (the latter also writes to Supabase Storage) — neither ever
+touches the football API, so neither ever spends any of the 100/day budget,
+however often they run.
 
 Switching to the **RapidAPI** distribution later is a one-line change in
 `config.py` (`API_FOOTBALL_BASE_URL`, `API_FOOTBALL_AUTH_HEADER`, and the

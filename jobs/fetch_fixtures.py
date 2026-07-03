@@ -72,6 +72,54 @@ def map_fixture_status(short: Optional[str]) -> str:
     return status
 
 
+# Canonical round strings this job normalises RAW API-Football `league.round`
+# values into (matched case/whitespace-insensitively against the raw string).
+# Confirmed LIVE against API-Football (2026-07-03): the WC 2026 season (in
+# progress) currently returns 'Group Stage - 1'/'- 2'/'- 3', 'Round of 32',
+# 'Round of 16' verbatim; the knockout strings beyond Round of 16 were
+# confirmed against the COMPLETED 2022 Qatar World Cup (season=2022, same
+# competition/provider -- only the 48-vs-32-team format differs):
+# 'Quarter-finals', 'Semi-finals', '3rd Place Final', 'Final'. This map only
+# canonicalises spelling VARIANTS of those already-confirmed strings (e.g. a
+# hyphen-less 'Quarterfinals') -- it never guesses at a round it hasn't seen;
+# see normalize_round()'s docstring for what happens to anything else
+# (group-stage rounds, and eventually club-football round strings).
+_ROUND_CANONICAL: dict[str, str] = {
+    variant: canonical
+    for canonical, variants in {
+        "Round of 32": ("round of 32",),
+        "Round of 16": ("round of 16",),
+        "Quarter-finals": ("quarter-finals", "quarterfinals", "quarter finals"),
+        "Semi-finals": ("semi-finals", "semifinals", "semi finals"),
+        "3rd Place Final": (
+            "3rd place final", "third place final",
+            "3rd place play-off", "3rd place playoff",
+        ),
+        "Final": ("final",),
+    }.items()
+    for variant in variants
+}
+
+
+def normalize_round(raw: Optional[str]) -> Optional[str]:
+    """Normalise a raw API-Football `league.round` string (jobs/db.py's
+    `fixtures.round`; the raw value is kept alongside as `api_round`).
+
+    Collapses whitespace and canonicalises known knockout-round spelling
+    variants (``_ROUND_CANONICAL`` above, confirmed live -- see that dict's
+    comment). Anything unrecognised -- a group-stage round ('Group Stage -
+    1'), or a future club-football round string -- is returned
+    whitespace-collapsed as-is: normalisation never drops or guesses at data
+    it doesn't recognise. Returns ``None`` for a null/empty input.
+    """
+    if not raw:
+        return None
+    cleaned = " ".join(raw.split())
+    if not cleaned:
+        return None
+    return _ROUND_CANONICAL.get(cleaned.lower(), cleaned)
+
+
 @dataclass(frozen=True)
 class ParsedTeam:
     api_team_id: int
@@ -94,6 +142,9 @@ class ParsedFixture:
     api_status_short: Optional[str]
     final_home_goals: Optional[int]
     final_away_goals: Optional[int]
+    round: Optional[str]
+    api_round: Optional[str]
+    winner_api_team_id: Optional[int]
 
 
 def _parse_team(node: dict) -> ParsedTeam:
@@ -102,6 +153,29 @@ def _parse_team(node: dict) -> ParsedTeam:
         name=node["name"],
         slug=util.slugify(node["name"]),
     )
+
+
+def _parse_winner_api_team_id(
+    teams_node: dict, home: ParsedTeam, away: ParsedTeam
+) -> Optional[int]:
+    """The API's own definitive winner flag (`teams.home/away.winner`) --
+    NOT derivable from the final score alone for a knockout match decided by
+    extra time or penalties: API-Football's `goals`/`score.fulltime` stays
+    the NORMAL-TIME score (verified live 2026-07-03, e.g. Germany 1-1
+    Paraguay decided on penalties -- `score.penalty: {home: 3, away: 4}`, but
+    `teams.away.winner: true`). Exactly one of the two `winner` booleans is
+    `true` for a decided match; both are `null` for a genuine draw (only
+    possible outside the knockout stage) or a not-yet-played fixture -- see
+    migration 0007's header comment for why this is stored at all
+    (jobs/simulate_chances.py's bracket progression needs it).
+    """
+    home_winner = (teams_node.get("home") or {}).get("winner")
+    away_winner = (teams_node.get("away") or {}).get("winner")
+    if home_winner is True and away_winner is not True:
+        return home.api_team_id
+    if away_winner is True and home_winner is not True:
+        return away.api_team_id
+    return None
 
 
 def parse_fixture(item: dict, *, default_season: int) -> ParsedFixture:
@@ -128,21 +202,27 @@ def parse_fixture(item: dict, *, default_season: int) -> ParsedFixture:
     else:
         final_home = final_away = None
 
+    home = _parse_team(teams["home"])
+    away = _parse_team(teams["away"])
     league_name = league.get("name") or f"League {league['id']}"
+    api_round = league.get("round")
     return ParsedFixture(
         api_league_id=league["id"],
         league_name=league_name,
         league_slug=util.slugify(league_name),
         country=league.get("country") or "World",
         season=league.get("season") or default_season,
-        home=_parse_team(teams["home"]),
-        away=_parse_team(teams["away"]),
+        home=home,
+        away=away,
         api_fixture_id=fixture["id"],
         kickoff_utc=util.to_utc_iso(fixture["date"]),
         status=status,
         api_status_short=(short.upper() if short else None),
         final_home_goals=final_home,
         final_away_goals=final_away,
+        round=normalize_round(api_round),
+        api_round=api_round,
+        winner_api_team_id=_parse_winner_api_team_id(teams, home, away),
     )
 
 
@@ -237,9 +317,10 @@ def run(
             for pf in parsed_league:
                 log.info(
                     "[dry-run] would upsert fixture api_id=%s: %s v %s kickoff=%s "
-                    "status=%s score=%s-%s",
+                    "status=%s score=%s-%s round=%r winner_api_team_id=%s",
                     pf.api_fixture_id, pf.home.name, pf.away.name, pf.kickoff_utc,
                     pf.status, pf.final_home_goals, pf.final_away_goals,
+                    pf.round, pf.winner_api_team_id,
                 )
             continue
 
@@ -260,6 +341,13 @@ def run(
                     )
                     counts["teams_upserted"] += 1
 
+            # winner_api_team_id, when present, is always one of home/away --
+            # both are guaranteed already-resolved by the upsert loop above.
+            resolved_winner_team_id = (
+                team_ids[pf.winner_api_team_id]
+                if pf.winner_api_team_id is not None
+                else None
+            )
             fixture_id = store.upsert_fixture(
                 api_fixture_id=pf.api_fixture_id,
                 league_id=resolved_league_id,
@@ -269,6 +357,9 @@ def run(
                 status=pf.status,
                 final_home_goals=pf.final_home_goals,
                 final_away_goals=pf.final_away_goals,
+                round_name=pf.round,
+                api_round=pf.api_round,
+                winner_team_id=resolved_winner_team_id,
             )
             counts["fixtures_upserted"] += 1
 

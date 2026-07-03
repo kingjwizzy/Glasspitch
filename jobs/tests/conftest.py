@@ -42,6 +42,8 @@ class FakeStore:
         user_predictions=None,
         pick_aggregates=None,
         snapshots=None,
+        tournament_chances=None,
+        ledger_checkpoints=None,
     ):
         self._upcoming = list(upcoming or [])
         self._finished = list(finished or [])
@@ -58,6 +60,10 @@ class FakeStore:
         self.user_predictions: list[dict] = [dict(p) for p in (user_predictions or [])]
         self.pick_aggregates: list[dict] = [dict(a) for a in (pick_aggregates or [])]
         self.snapshots: list[dict] = [dict(s) for s in (snapshots or [])]
+        # W6/W7 (migration 0007): World Cup Chances snapshots + ledger
+        # integrity checkpoints (jobs/simulate_chances.py, jobs/ledger_integrity.py).
+        self.tournament_chances: list[dict] = [dict(r) for r in (tournament_chances or [])]
+        self.ledger_checkpoints: list[dict] = [dict(r) for r in (ledger_checkpoints or [])]
         # recorded writes
         self.upserted_leagues: list[dict] = []
         self.upserted_teams: list[dict] = []
@@ -71,6 +77,17 @@ class FakeStore:
         self.user_pick_scores: list[dict] = []
         self.aggregate_writes: list[dict] = []
         self.snapshot_writes: list[list[dict]] = []
+        self.chances_writes: list[list[dict]] = []
+        self.checkpoint_writes: list[dict] = []
+        # jobs/ledger_integrity.py's Storage surface (mocked -- never a real
+        # bucket): ensured_buckets records every ensure_private_backup_bucket
+        # call; uploads records every upload in call order (so a re-run's
+        # second upload is visible); backup_files[(bucket, path)] holds the
+        # CURRENT payload -- an upsert-overwrite, exactly like the real
+        # upload_backup's file_options={'upsert': 'true'}.
+        self.ensured_buckets: list[str] = []
+        self.uploads: list[tuple[str, str, bytes]] = []
+        self.backup_files: dict[tuple[str, str], bytes] = {}
         self._seq = 0
 
     # ----- reads -----
@@ -362,6 +379,110 @@ class FakeStore:
             else:
                 self.snapshots.append(dict(row))
         return len(rows)
+
+    # ----- W7 (migration 0007): World Cup Chances (jobs/simulate_chances.py).
+    # Mirrors jobs.db.SupabaseStore's method surface -- fixtures carry a
+    # "round" key ONLY when a test opts in (a fixture without one never
+    # matches any requested round, exactly like a null `fixtures.round`
+    # column); season/api_league_id use the same wildcard convention as
+    # finished_fixtures_for_replay (see module docstring).
+    def fixtures_for_rounds(self, *, api_league_ids, season, rounds):
+        if not api_league_ids or not rounds:
+            return []
+        default_league = api_league_ids[0]  # wildcard default, see module docstring
+        matched = [
+            dict(f)
+            for f in [*self._finished, *self._upcoming]
+            if f.get("round") in rounds
+            and f.get("season", season) == season
+            and f.get("api_league_id", default_league) in api_league_ids
+        ]
+        matched.sort(key=lambda f: f["kickoff_utc"])
+        return matched
+
+    def third_party_prediction_probs(self, fixture_ids, *, source):
+        return {
+            p["fixture_id"]: {
+                "home": p["prob_home"],
+                "draw": p["prob_draw"],
+                "away": p["prob_away"],
+            }
+            for p in self.predictions
+            if p["source"] == source and p["fixture_id"] in set(fixture_ids)
+        }
+
+    def upsert_tournament_chances(self, rows):
+        """Mirrors jobs.db.SupabaseStore.upsert_tournament_chances: bulk
+        upsert keyed on the (snapshot_date, team_id) PK -- a same-day re-run
+        overwrites in place, never accumulates duplicate rows."""
+        self.chances_writes.append([dict(r) for r in rows])
+        for row in rows:
+            key = (row["snapshot_date"], row["team_id"])
+            existing = next(
+                (
+                    r
+                    for r in self.tournament_chances
+                    if (r["snapshot_date"], r["team_id"]) == key
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(row)
+            else:
+                self.tournament_chances.append(dict(row))
+        return len(rows)
+
+    # ----- Ledger integrity ops (migration 0007, jobs/ledger_integrity.py) --
+    def dump_table(self, table_name):
+        """Full-table dump for the backup export -- maps the table names in
+        ledger_integrity.BACKUP_TABLES onto this fake's own in-memory state
+        (tables the fake doesn't model dump as empty, which is exactly what a
+        fresh DB would give)."""
+        tables = {
+            "fixtures": [*self._finished, *self._upcoming],
+            "predictions": self.predictions,
+            "top_scorers": self.top_scorers,
+            "user_predictions": self.user_predictions,
+            "fixture_pick_aggregates": self.pick_aggregates,
+            "team_probability_snapshots": self.snapshots,
+            "tournament_chances": self.tournament_chances,
+        }
+        return [dict(r) for r in tables.get(table_name, [])]
+
+    def scored_predictions_ordered(self):
+        """Mirrors jobs.db.SupabaseStore.scored_predictions_ordered: every
+        SCORED prediction ordered by (scored_at, id) -- the canonical hash-
+        chain fold order."""
+        rows = [dict(p) for p in self.predictions if p["status"] == "scored"]
+        rows.sort(key=lambda p: (p.get("scored_at") or "", str(p.get("id"))))
+        return rows
+
+    def ledger_checkpoint_for_day(self, day):
+        row = next((c for c in self.ledger_checkpoints if c["day"] == day), None)
+        return dict(row) if row else None
+
+    def upsert_ledger_checkpoint(self, *, day, scored_rows, chain_hash, prev_hash):
+        """Mirrors jobs.db.SupabaseStore.upsert_ledger_checkpoint: upsert
+        keyed on ledger_checkpoints.day (UNIQUE)."""
+        row = {
+            "day": day,
+            "scored_rows": scored_rows,
+            "chain_hash": chain_hash,
+            "prev_hash": prev_hash,
+        }
+        self.checkpoint_writes.append(dict(row))
+        existing = next((c for c in self.ledger_checkpoints if c["day"] == day), None)
+        if existing is not None:
+            existing.update(row)
+        else:
+            self.ledger_checkpoints.append(dict(row))
+
+    def ensure_private_backup_bucket(self, bucket_id):
+        self.ensured_buckets.append(bucket_id)
+
+    def upload_backup(self, bucket_id, path, payload):
+        self.uploads.append((bucket_id, path, payload))
+        self.backup_files[(bucket_id, path)] = payload
 
     # ----- writes -----
     def upsert_league(self, **kw):
@@ -754,7 +875,9 @@ class FakeSupabaseClient:
         RPC: FK-safe cascade delete (predictions -> fixtures -> teams ->
         leagues), guarded on there being matching league ids at all so an
         absent/mismatched season issues NO delete calls."""
-        league_ids = [l["id"] for l in self.tables["leagues"] if l.get("season") == season]
+        league_ids = [
+            row["id"] for row in self.tables["leagues"] if row.get("season") == season
+        ]
         fixture_ids = (
             [f["id"] for f in self.tables["fixtures"] if f.get("league_id") in league_ids]
             if league_ids
@@ -790,7 +913,7 @@ class FakeSupabaseClient:
 
             before = len(self.tables["leagues"])
             self.tables["leagues"] = [
-                l for l in self.tables["leagues"] if l.get("id") not in league_ids
+                row for row in self.tables["leagues"] if row.get("id") not in league_ids
             ]
             self.delete_log.append("leagues")
             leagues_deleted = before - len(self.tables["leagues"])

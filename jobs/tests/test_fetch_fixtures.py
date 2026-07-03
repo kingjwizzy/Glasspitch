@@ -1,10 +1,18 @@
-"""Tests for fetch_fixtures: status mapping, parsing, idempotent upserts, dry-run."""
+"""Tests for fetch_fixtures: status mapping, parsing, idempotent upserts, dry-run,
+and (W6, migration 0007) round normalisation + the API's definitive winner flag."""
 
 from datetime import timedelta
 
 from jobs import config, util
 from jobs.apiclient import ApiFootballError, RequestBudgetExceeded
-from jobs.fetch_fixtures import map_fixture_status, parse_fixture, run
+from jobs.fetch_fixtures import (
+    ParsedTeam,
+    _parse_winner_api_team_id,
+    map_fixture_status,
+    normalize_round,
+    parse_fixture,
+    run,
+)
 
 
 def test_status_mapping_known_codes():
@@ -222,3 +230,156 @@ def test_run_does_not_close_predictions_for_a_merely_postponed_fixture(
 
     assert counts["predictions_closed_terminal"] == 0
     assert store.predictions[0]["status"] == "locked"
+
+
+# ==============================================================================
+# W6 (migration 0007): round parsing/normalisation + winner_team_id -- the
+# fields jobs/simulate_chances.py's bracket progression depends on.
+# ==============================================================================
+
+
+def test_normalize_round_canonicalises_confirmed_spelling_variants():
+    # The live-confirmed canonical strings pass through unchanged...
+    for canonical in (
+        "Round of 32", "Round of 16", "Quarter-finals", "Semi-finals",
+        "3rd Place Final", "Final",
+    ):
+        assert normalize_round(canonical) == canonical
+    # ...and known case/spelling variants collapse onto them.
+    assert normalize_round("round of 16") == "Round of 16"
+    assert normalize_round("FINAL") == "Final"
+    assert normalize_round("Quarterfinals") == "Quarter-finals"
+    assert normalize_round("Quarter finals") == "Quarter-finals"
+    assert normalize_round("Semifinals") == "Semi-finals"
+    assert normalize_round("Semi finals") == "Semi-finals"
+    assert normalize_round("Third Place Final") == "3rd Place Final"
+    assert normalize_round("3rd Place Play-off") == "3rd Place Final"
+    assert normalize_round("3rd place playoff") == "3rd Place Final"
+
+
+def test_normalize_round_passes_unrecognised_rounds_through_collapsed():
+    # Group-stage / club-football strings are never guessed at or dropped --
+    # only whitespace-collapsed.
+    assert normalize_round("Group Stage - 1") == "Group Stage - 1"
+    assert normalize_round("  Group   Stage\t-  2 ") == "Group Stage - 2"
+    assert normalize_round("Regular Season - 12") == "Regular Season - 12"
+    # Null/empty inputs stay null.
+    assert normalize_round(None) is None
+    assert normalize_round("") is None
+    assert normalize_round("   ") is None
+
+
+def test_parse_winner_api_team_id_reads_the_definitive_winner_flag():
+    home = ParsedTeam(api_team_id=25, name="Germany", slug="germany")
+    away = ParsedTeam(api_team_id=2382, name="Paraguay", slug="paraguay")
+
+    assert _parse_winner_api_team_id(
+        {"home": {"id": 25, "winner": True}, "away": {"id": 2382, "winner": False}},
+        home, away,
+    ) == 25
+    assert _parse_winner_api_team_id(
+        {"home": {"id": 25, "winner": False}, "away": {"id": 2382, "winner": True}},
+        home, away,
+    ) == 2382
+    # A genuine draw / not-yet-played fixture: both flags null -> no winner.
+    assert _parse_winner_api_team_id(
+        {"home": {"id": 25, "winner": None}, "away": {"id": 2382, "winner": None}},
+        home, away,
+    ) is None
+    # Defensive: a nonsensical both-true payload never picks a side.
+    assert _parse_winner_api_team_id(
+        {"home": {"id": 25, "winner": True}, "away": {"id": 2382, "winner": True}},
+        home, away,
+    ) is None
+    # Missing/null team nodes degrade to None rather than raising.
+    assert _parse_winner_api_team_id({}, home, away) is None
+    assert _parse_winner_api_team_id({"home": None, "away": None}, home, away) is None
+
+
+def _penalty_shootout_item():
+    """The live-confirmed shape (2026-07-03, fixture 1565176 Germany v
+    Paraguay): a knockout match drawn 1-1 after 90 minutes and decided on
+    penalties -- score.fulltime stays the NORMAL-TIME score, and only
+    teams.away.winner carries who actually advanced."""
+    return {
+        "fixture": {
+            "id": 1565176,
+            "date": "2026-07-01T19:00:00+00:00",
+            "status": {"short": "PEN", "long": "Match Finished After Penalties"},
+        },
+        "league": {
+            "id": 1, "name": "World Cup", "country": "World", "season": 2026,
+            "round": "Round of 32",
+        },
+        "teams": {
+            "home": {"id": 25, "name": "Germany", "winner": False},
+            "away": {"id": 2382, "name": "Paraguay", "winner": True},
+        },
+        "goals": {"home": 1, "away": 1},
+        "score": {
+            "fulltime": {"home": 1, "away": 1},
+            "penalty": {"home": 3, "away": 4},
+        },
+    }
+
+
+def test_parse_fixture_keeps_the_ninety_minute_score_but_flags_the_shootout_winner():
+    parsed = parse_fixture(_penalty_shootout_item(), default_season=2026)
+
+    assert parsed.status == "finished"
+    # The ledger's 1X2 market stays the 90-minute score -- a draw...
+    assert parsed.final_home_goals == 1 and parsed.final_away_goals == 1
+    # ...but the definitive winner flag says who actually advanced.
+    assert parsed.winner_api_team_id == 2382
+    assert parsed.round == "Round of 32"
+    assert parsed.api_round == "Round of 32"
+
+
+def test_parse_fixture_normalises_round_but_keeps_the_raw_api_round():
+    item = _penalty_shootout_item()
+    item["league"]["round"] = "Quarterfinals"  # a spelling variant
+    parsed = parse_fixture(item, default_season=2026)
+    assert parsed.round == "Quarter-finals"
+    assert parsed.api_round == "Quarterfinals"
+
+    # A group-stage genuine draw: round passes through, no winner at all.
+    item = _penalty_shootout_item()
+    item["league"]["round"] = "Group Stage - 1"
+    item["fixture"]["status"]["short"] = "FT"
+    item["teams"]["home"]["winner"] = None
+    item["teams"]["away"]["winner"] = None
+    del item["score"]["penalty"]
+    parsed = parse_fixture(item, default_season=2026)
+    assert parsed.round == "Group Stage - 1"
+    assert parsed.winner_api_team_id is None
+
+
+def test_parse_fixture_without_round_or_winner_keys_stays_null(fixtures_payload):
+    # The pre-0007 payload shape (conftest fixtures_payload has no
+    # league.round and no teams.*.winner keys) parses with nulls, not errors.
+    parsed = parse_fixture(fixtures_payload["response"][0], default_season=2026)
+    assert parsed.round is None
+    assert parsed.api_round is None
+    assert parsed.winner_api_team_id is None
+
+
+def test_run_wires_round_and_winner_team_id_into_the_fixture_upsert(store, make_api):
+    api = make_api(fixtures={"response": [_penalty_shootout_item()]})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["fixtures_upserted"] == 1
+    kw = store.upserted_fixtures[0]
+    assert kw["round_name"] == "Round of 32"
+    assert kw["api_round"] == "Round of 32"
+    # The winner's api team id resolved through the SAME team-id mapping the
+    # home/away columns use -- Paraguay was the away side and won on pens.
+    assert kw["winner_team_id"] == kw["away_team_id"]
+    assert kw["winner_team_id"] is not None
+
+
+def test_run_upserts_null_winner_for_an_undecided_fixture(store, make_api, fixtures_payload):
+    run(dry_run=False, store=store, api=make_api(fixtures=fixtures_payload))
+    for kw in store.upserted_fixtures:
+        assert kw["winner_team_id"] is None
+        assert kw["round_name"] is None and kw["api_round"] is None

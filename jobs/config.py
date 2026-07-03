@@ -117,3 +117,37 @@ POSTPONED_VOID_HORIZON_DAYS: int = int(
 SNAPSHOT_FIXTURE_WINDOW_HOURS: float = float(
     os.environ.get("SNAPSHOT_FIXTURE_WINDOW_HOURS") or str(24 * 14)
 )
+
+# --- W7: World Cup Chances Monte Carlo simulation ----------------------------
+# (ARCHITECTURE.md v3, ROADMAP.md §4 item 7, migration 0007,
+# jobs/simulate_chances.py). DB-only -- no football-API call, so no
+# request-budget interaction.
+
+# Canonical knockout-round progression the sim advances through, in order.
+# Matches API-Football's exact `league.round` strings for a FIFA World Cup --
+# confirmed LIVE (2026-07-03): the 2026 season (in progress) returns
+# 'Round of 32' / 'Round of 16' verbatim; the strings beyond Round of 16 were
+# confirmed against the COMPLETED 2022 Qatar World Cup (season=2022, same
+# competition/provider -- only the 48-vs-32-team format differs):
+# 'Quarter-finals', 'Semi-finals', 'Final' (see jobs/fetch_fixtures.py's
+# normalize_round()). '3rd Place Final' is deliberately EXCLUDED from this
+# list -- it is a sibling of the Final (both semifinal losers/winners
+# respectively), not a step toward WINNING the tournament, so it plays no
+# part in the sim's advancement chain (normalize_round() still recognises the
+# string for fixtures.round).
+KNOCKOUT_ROUND_ORDER: list[str] = [
+    "Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final",
+]
+
+# Monte Carlo trial count. Env-overridable so tests/dev can run a tiny number
+# of sims fast; the committed default (10,000) is what LIVE runs use.
+MONTE_CARLO_SIMS: int = int(os.environ.get("MONTE_CARLO_SIMS") or "10000")
+
+# --- Ledger integrity ops -----------------------------------------------------
+# (ARCHITECTURE.md v3 "Ledger integrity ops" amendment, ROADMAP.md §4 item 5,
+# jobs/ledger_integrity.py). DB-only -- no football-API call.
+
+# Private Supabase Storage bucket the nightly export writes full-table JSON
+# snapshots into. Created idempotently (get-or-create) by the job itself, and
+# its non-public-ness is verified at every run -- see that module.
+LEDGER_BACKUPS_BUCKET: str = os.environ.get("LEDGER_BACKUPS_BUCKET") or "ledger-backups"

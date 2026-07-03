@@ -148,6 +148,9 @@ class SupabaseStore:
         status: str,
         final_home_goals: Optional[int],
         final_away_goals: Optional[int],
+        round_name: Optional[str] = None,
+        api_round: Optional[str] = None,
+        winner_team_id: Optional[int] = None,
     ) -> int:
         """Upsert one fixture, keyed on ``api_fixture_id``.
 
@@ -156,6 +159,13 @@ class SupabaseStore:
         ``locked_at`` to the new kickoff -- otherwise the "locked at kickoff"
         guarantee silently drifts from the real kickoff (v2 hardening; see
         ``reconcile_kickoff_change``).
+
+        ``round_name`` (-> the ``fixtures.round`` column; named to avoid
+        shadowing the ``round()`` builtin) / ``api_round`` / ``winner_team_id``
+        (migration 0007, jobs/fetch_fixtures.py's ``normalize_round``/
+        ``_parse_winner_api_team_id``) default to ``None`` so any OTHER
+        caller of this method (there are none today, but the interface stays
+        backward compatible) keeps working unchanged.
         """
         existing = (
             self._client.table("fixtures")
@@ -175,6 +185,9 @@ class SupabaseStore:
             "status": status,
             "final_home_goals": final_home_goals,
             "final_away_goals": final_away_goals,
+            "round": round_name,
+            "api_round": api_round,
+            "winner_team_id": winner_team_id,
         }
         res = (
             self._client.table("fixtures")
@@ -855,3 +868,166 @@ class SupabaseStore:
             "fixtures": data.get("fixtures", 0),
             "predictions": data.get("predictions", 0),
         }
+
+    # ----- W7: World Cup Chances (Monte Carlo sim, migration 0007) -----------
+    # jobs/simulate_chances.py. DB-only -- no football-API call. PUBLIC data,
+    # same access class as top_scorers/team_probability_snapshots.
+    def fixtures_for_rounds(
+        self, *, api_league_ids: list[int], season: int, rounds: list[str]
+    ) -> list[dict]:
+        """Every fixture (ANY status -- unlike ``finished_fixtures_for_replay``,
+        the sim needs scheduled/live fixtures too) whose normalised ``round``
+        is in ``rounds``, scoped to the tracked league(s) + season, ordered by
+        kickoff -- jobs/simulate_chances.py's whole candidate pool. Embeds
+        ``winner_team_id`` (migration 0007) so the sim can trust an
+        already-decided knockout match's TRUE outcome instead of re-deriving
+        it (and getting a penalty shootout wrong) from the final score alone.
+        """
+        if not api_league_ids or not rounds:
+            return []
+        return self._paginated(
+            lambda: self._client.table("fixtures")
+            .select(
+                "id, api_fixture_id, home_team_id, away_team_id, kickoff_utc, "
+                "status, final_home_goals, final_away_goals, winner_team_id, "
+                "round, leagues!inner(api_league_id, season)"
+            )
+            .eq("leagues.season", season)
+            .in_("leagues.api_league_id", api_league_ids)
+            .in_("round", rounds)
+            .order("kickoff_utc")
+        )
+
+    def third_party_prediction_probs(
+        self, fixture_ids: list[int], *, source: str
+    ) -> dict[int, dict]:
+        """``fixture_id -> {'home', 'draw', 'away'}`` for any EXISTING
+        ``source`` prediction among ``fixture_ids`` (any status -- published/
+        locked/scored, it doesn't matter, only the probabilities are read).
+        jobs/simulate_chances.py prefers a fixture's REAL stored prediction
+        over its own Elo fallback whenever one is already on the ledger.
+        """
+        if not fixture_ids:
+            return {}
+        rows = self._paginated(
+            lambda: self._client.table("predictions")
+            .select("fixture_id, prob_home, prob_draw, prob_away")
+            .eq("source", source)
+            .in_("fixture_id", fixture_ids)
+        )
+        return {
+            row["fixture_id"]: {
+                "home": row["prob_home"],
+                "draw": row["prob_draw"],
+                "away": row["prob_away"],
+            }
+            for row in rows
+        }
+
+    def upsert_tournament_chances(self, rows: list[dict]) -> int:
+        """Idempotent bulk upsert keyed on the table's own
+        (snapshot_date, team_id) PK -- a same-day re-run overwrites with
+        freshly-simulated values (never accumulates duplicate rows)."""
+        if not rows:
+            return 0
+        self._client.table("tournament_chances").upsert(
+            rows, on_conflict="snapshot_date,team_id"
+        ).execute()
+        return len(rows)
+
+    # ----- Ledger integrity ops (migration 0007) ------------------------------
+    # jobs/ledger_integrity.py. DB-only for the hash chain; Storage (NOT the
+    # DB) for the backup export -- see that module for the exact
+    # canonicalisation / chaining rule.
+    def dump_table(self, table_name: str) -> list[dict]:
+        """Every row of ``table_name``, unfiltered -- the nightly full-table
+        backup export's read side. Paginated like every other bulk read.
+        ``table_name`` is only ever one of ``ledger_integrity.BACKUP_TABLES``
+        (a fixed, module-level constant -- never user input), so this is not
+        an injection surface despite not being a literal table() call."""
+        return self._paginated(lambda: self._client.table(table_name).select("*"))
+
+    def scored_predictions_ordered(self) -> list[dict]:
+        """Every SCORED prediction, ordered by ``(scored_at, id)`` -- the
+        canonical order jobs/ledger_integrity.py folds into its SHA-256 hash
+        chain. Scored predictions are frozen by the migration 0001/0003
+        immutability trigger, so this order is STABLE across runs: a re-run
+        only ever appends new rows to the tail, never reorders or changes an
+        existing one -- which is exactly what makes recomputing the whole
+        chain from scratch every night both safe and deterministic.
+        """
+        return self._paginated(
+            lambda: self._client.table("predictions")
+            .select("*")
+            .eq("status", "scored")
+            .order("scored_at")
+            .order("id")
+        )
+
+    def ledger_checkpoint_for_day(self, day: str) -> Optional[dict]:
+        """The ``ledger_checkpoints`` row for one ``'YYYY-MM-DD'`` day, or
+        ``None`` if that day has no checkpoint yet -- jobs/ledger_integrity.py
+        reads YESTERDAY's row once per run to populate today's ``prev_hash``.
+        """
+        rows = (
+            self._client.table("ledger_checkpoints")
+            .select("*")
+            .eq("day", day)
+            .limit(1)
+            .execute()
+            .data
+        )
+        return rows[0] if rows else None
+
+    def upsert_ledger_checkpoint(
+        self,
+        *,
+        day: str,
+        scored_rows: int,
+        chain_hash: str,
+        prev_hash: Optional[str],
+    ) -> None:
+        """Idempotent upsert keyed on ``ledger_checkpoints.day`` (UNIQUE) --
+        a same-day re-run recomputes the identical chain_hash (see
+        ``scored_predictions_ordered``'s docstring) and simply overwrites with
+        the same values.
+        """
+        self._client.table("ledger_checkpoints").upsert(
+            {
+                "day": day,
+                "scored_rows": scored_rows,
+                "chain_hash": chain_hash,
+                "prev_hash": prev_hash,
+            },
+            on_conflict="day",
+        ).execute()
+
+    def ensure_private_backup_bucket(self, bucket_id: str) -> None:
+        """Get-or-create ``bucket_id`` as a PRIVATE Supabase Storage bucket,
+        then verify it is actually private -- belt-and-suspenders in case
+        someone flips it public later via the dashboard. Raises loudly rather
+        than silently exporting ledger backups into a public bucket.
+        """
+        from storage3.exceptions import StorageApiError  # local: storage-only dep
+
+        try:
+            bucket = self._client.storage.get_bucket(bucket_id)
+        except StorageApiError:
+            self._client.storage.create_bucket(bucket_id, options={"public": False})
+            bucket = self._client.storage.get_bucket(bucket_id)
+        if getattr(bucket, "public", False):
+            raise RuntimeError(
+                f"Storage bucket {bucket_id!r} is PUBLIC -- refusing to export "
+                "ledger backups into it (ARCHITECTURE.md v3 ledger-integrity-ops "
+                "amendment requires a PRIVATE bucket). Fix the bucket's "
+                "visibility in the Supabase dashboard, then re-run this job."
+            )
+
+    def upload_backup(self, bucket_id: str, path: str, payload: bytes) -> None:
+        """Upload (or overwrite -- ``upsert``) one backup file. ``path`` is
+        conventionally ``f'{table}/{snapshot_date}.json'`` (jobs/ledger_integrity.py)."""
+        self._client.storage.from_(bucket_id).upload(
+            path,
+            payload,
+            file_options={"content-type": "application/json", "upsert": "true"},
+        )

@@ -109,7 +109,7 @@ def test_teardown_season_isolates_other_seasons(make_supabase_client):
     }
     # Season 2026 is untouched — same counts, and the exact rows still present.
     assert store.count_season_rows(2026) == before_2026
-    assert {l["id"] for l in client.tables["leagues"]} == {2}
+    assert {row["id"] for row in client.tables["leagues"]} == {2}
     assert {t["id"] for t in client.tables["teams"]} == {501, 502}
     assert {f["id"] for f in client.tables["fixtures"]} == {511, 512}
     assert {p["id"] for p in client.tables["predictions"]} == {"p601", "p602", "p603"}
