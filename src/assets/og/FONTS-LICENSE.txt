@@ -1,0 +1,13 @@
+Vendored font binaries for server-side Open Graph image rendering only
+(next/og ImageResponse cannot use the woff2 files next/font emits, and the
+share-kit routes must make no network calls at request time).
+
+- Archivo-SemiBold.ttf      — Archivo, © Omnibus-Type (https://www.omnibus-type.com)
+- IBMPlexMono-Regular.ttf   — IBM Plex Mono, © IBM Corp.
+- IBMPlexMono-Medium.ttf    — IBM Plex Mono, © IBM Corp.
+
+All three are licensed under the SIL Open Font License 1.1
+(https://openfontlicense.org). Static instances fetched from Google Fonts
+(fonts.gstatic.com) on 2026-07-03. These faces match the site's next/font
+loads in src/app/layout.tsx (DESIGN.md §3), so share cards render in the
+same brand type as the pages they represent.

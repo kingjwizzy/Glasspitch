@@ -1,15 +1,15 @@
 import 'server-only';
 import type { PremiumPlan } from '@/lib/types';
 
-// Plan ↔ Stripe Price id mapping (ARCHITECTURE.md §4: £4/mo + £29/yr, locked
+// Plan ↔ Stripe Price id mapping (ARCHITECTURE.md §4: £6/mo + £39/yr, locked
 // pricing). The env vars are allowed to be EMPTY (test mode, pre-launch) —
 // every caller must treat a missing price id as "this plan isn't available
 // right now", never crash (v2 guardrail: degrade gracefully when Stripe env
 // is unset).
 
 export const PLAN_LABEL: Record<PremiumPlan, string> = {
-  monthly: '£4/month',
-  annual: '£29/year',
+  monthly: '£6/month',
+  annual: '£39/year',
 };
 
 export function priceIdFor(plan: PremiumPlan): string | null {

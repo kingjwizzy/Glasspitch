@@ -11,7 +11,7 @@
 // where flags don't exist). An unmapped team name renders NOTHING — never a
 // broken image (flagCodeForTeam returns null and we bail).
 
-import { flagCodeForTeam } from '@/lib/flags';
+import { flagCodeForNationality, flagCodeForTeam } from '@/lib/flags';
 
 export interface TeamFlagProps {
   /** Team name exactly as stored in the DB. */
@@ -26,10 +26,31 @@ const SIZE_PX: Record<NonNullable<TeamFlagProps['size']>, number> = {
   hero: 28,
 };
 
-export default function TeamFlag({ name, size = 'row', className }: TeamFlagProps) {
-  const code = flagCodeForTeam(name);
+/** Same decorative round flag, resolved from a PLAYER NATIONALITY string
+ *  (top_scorers.nationality) rather than a team name — Golden Boot surfaces
+ *  (W6: "nationality → flag where mappable"). Identical degradation: an
+ *  unmapped nationality renders nothing, never a broken image. */
+export function NationalityFlag({
+  nationality,
+  className,
+}: {
+  nationality: string;
+  className?: string;
+}) {
+  const code = flagCodeForNationality(nationality);
   if (!code) return null;
-  const px = SIZE_PX[size];
+  return <FlagImg code={code} px={SIZE_PX.row} className={className} />;
+}
+
+function FlagImg({
+  code,
+  px,
+  className,
+}: {
+  code: string;
+  px: number;
+  className?: string;
+}) {
   return (
     // Plain <img>, not next/image: these are tiny local SVGs (≈1–4KB) where the
     // optimizer adds nothing (and would need dangerouslyAllowSVG); width/height
@@ -46,4 +67,11 @@ export default function TeamFlag({ name, size = 'row', className }: TeamFlagProp
       className={`inline-block shrink-0 rounded-full ${className ?? ''}`}
     />
   );
+}
+
+export default function TeamFlag({ name, size = 'row', className }: TeamFlagProps) {
+  const code = flagCodeForTeam(name);
+  if (!code) return null;
+  const px = SIZE_PX[size];
+  return <FlagImg code={code} px={px} className={className} />;
 }

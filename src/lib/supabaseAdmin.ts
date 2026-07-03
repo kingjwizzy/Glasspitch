@@ -3,7 +3,7 @@
 // The secret key bypasses Row Level Security and can write (ARCHITECTURE.md
 // §7). It must NEVER reach the browser bundle (§12): the secret key is a
 // secret. The Python jobs remain the only writer of football data; this
-// client is now ALSO used by two v2-amendment-sanctioned server-only callers
+// client is used ONLY by the amendment-sanctioned server-only callers below
 // (ARCHITECTURE.md §0/§5, amended 2026-07-03):
 //   1. src/app/api/stripe/webhook/route.ts — the ONE writer of the billing
 //      tables (`subscriptions`, `stripe_events`), signature-verified.
@@ -11,8 +11,17 @@
 //      account deletion (`auth.admin.deleteUser`), which cascades to
 //      `profiles`/`subscriptions` via FK constraints rather than writing a
 //      billing row directly.
+//   3. src/app/api/email/* (W6, §5 v3 email-capture amendment) — the ONE
+//      writer of `email_subscribers`, and of that table only (double opt-in
+//      subscribe/confirm/unsubscribe; the table has zero anon access).
+//   4. src/lib/queries/openMatch.ts's `getOpenMatchInsights` (W6) — a
+//      READ-ONLY exception: renders ONE deterministic match's premium
+//      `fixture_insights` into the public cached match page per day ("open
+//      match of the day", ROADMAP.md §2 owner-approved). Writes nothing.
 // No other caller is sanctioned; adding one needs an explicit ARCHITECTURE.md
-// amendment first, per CLAUDE.md's roster note.
+// amendment first, per CLAUDE.md's roster note. Note the user-picks writer
+// path (/play) deliberately does NOT appear here — game picks go through the
+// visitor's own RLS-scoped publishable-key client, never this one.
 //
 // `import 'server-only'` makes an accidental client-component import a BUILD
 // error rather than only a runtime throw in the visitor's browser (the

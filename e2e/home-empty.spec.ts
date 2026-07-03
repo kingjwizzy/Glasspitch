@@ -70,18 +70,57 @@ test('/ (empty) renders honest structural empty states — never fake data', asy
   expect(await band.innerText()).not.toMatch(/\d\.\d{3}/);
 });
 
-test('/ (empty) keeps the page skeleton: 7 sections, one sign-up end-cap, disclaimer', async ({
+test('/ (empty) keeps the page skeleton: 8 sections, one sign-up end-cap, disclaimer', async ({
   page,
 }) => {
   await page.goto(`${EMPTY_HOME_URL}/`, { waitUntil: 'load' });
 
   await expectLandmarksAndCompliance(page);
-  await expect(page.locator('section[aria-labelledby]')).toHaveCount(7);
+  // 8 = the W4 seven + the W6 World Cup chances section. (That slot has no
+  // preview hatch — it renders from the REAL `tournament_chances` table in
+  // whichever state it holds; see the dedicated chances-slot test below. The
+  // section itself is always present, so the count is state-independent.)
+  await expect(page.locator('section[aria-labelledby]')).toHaveCount(8);
   await expect(page.locator('h1')).toHaveText('Football analysis you can check');
 
   // Exactly one sign-up affordance, even with nothing to show.
   await expect(page.getByRole('link', { name: 'Create a free account' })).toHaveCount(1);
   await expect(page.locator('main a[href="/login"]')).toHaveCount(2);
+});
+
+// W6: the chances slot reads the LIVE `tournament_chances` table (no preview
+// hatch — Golden-Boot-slot convention), so this build renders whichever state
+// the real backing store holds: the sized circle cloud with its printed
+// percentages, or the honest "after tonight's first simulation run" copy.
+// Either way the section is structurally intact and never invents numbers —
+// a spinner or a fabricated placeholder figure would fail both branches.
+test('/ (empty) chances slot is structurally honest — real circles or the empty copy', async ({
+  page,
+}) => {
+  await page.goto(`${EMPTY_HOME_URL}/`, { waitUntil: 'load' });
+
+  const section = page.locator('section[aria-labelledby="chances-heading"]');
+  await expect(section).toBeVisible();
+  await expect(section.getByRole('heading', { name: 'World Cup chances' })).toBeVisible();
+  await expect(section.getByRole('link', { name: 'The full picture' })).toHaveAttribute(
+    'href',
+    '/chances',
+  );
+
+  const circles = section.locator('ol > li');
+  const circleCount = await circles.count();
+  if (circleCount > 0) {
+    // Populated from the real table: every circle prints its % (size is
+    // never the sole signal) and the provenance line states the trial count.
+    expect(await section.getByText(/^(\d+|<1|>99)%$/).count()).toBe(circleCount);
+    await expect(
+      section.getByText(/simulated [\d,]+ times · updated daily/),
+    ).toBeVisible();
+  } else {
+    await expect(
+      section.getByText(/Tournament chances appear here after tonight/),
+    ).toBeVisible();
+  }
 });
 
 test('/ (empty) renders with no runtime errors', async ({ page }) => {

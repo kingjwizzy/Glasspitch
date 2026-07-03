@@ -12,7 +12,7 @@ keys. Position consistently everywhere: **statistics & analysis publisher**.
 > statistical breakdowns, framed explicitly as analysis — not betting
 > advice. We publish no odds, no betting tips, carry no bookmaker
 > advertising or affiliate links, and do not take, place, route or
-> facilitate bets of any kind. Subscriptions (£4/month or £29/year) unlock
+> facilitate bets of any kind. Subscriptions (£6/month or £39/year) unlock
 > deeper statistical content only — expected-goals breakdowns, pre-match
 > statistical comparisons and data exports. Every prediction and our
 > complete accuracy record remain free; uniquely, our track record is

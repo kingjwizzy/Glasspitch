@@ -68,3 +68,35 @@ const TEAM_FLAG_CODES: Record<string, string> = {
 export function flagCodeForTeam(name: string): string | null {
   return TEAM_FLAG_CODES[name] ?? null;
 }
+
+// Player NATIONALITY strings (top_scorers.nationality, straight from the
+// data provider) don't always match our team-name spellings — e.g. the
+// provider writes "Turkey" and "Korea Republic" where our teams table says
+// "Türkiye" and "South Korea". This alias map covers the divergent spellings
+// so a scorer's nation can map to the same vendored flag set. Same
+// degradation contract as teams: an unmapped nationality renders NO flag,
+// and the plain-text nationality stays the primary identifier (W6 build
+// item: "flags where mappable — the owner wants faces eventually; flags
+// now").
+const NATIONALITY_ALIASES: Record<string, string> = {
+  'Bosnia and Herzegovina': 'ba',
+  'Cape Verde': 'cv',
+  "Cote d'Ivoire": 'ci',
+  "Côte d'Ivoire": 'ci',
+  'Czech Republic': 'cz',
+  'DR Congo': 'cd',
+  Holland: 'nl',
+  'Korea Republic': 'kr',
+  'Republic of Korea': 'kr',
+  Turkey: 'tr',
+  'United States': 'us',
+  'United States of America': 'us',
+};
+
+/** Flag code for a player nationality, or null when unmapped (→ no flag).
+ *  Tries the exact team-name map first (the two vocabularies mostly agree —
+ *  verified against the live top_scorers rows on 2026-07-03), then the
+ *  provider-spelling aliases above. */
+export function flagCodeForNationality(nationality: string): string | null {
+  return TEAM_FLAG_CODES[nationality] ?? NATIONALITY_ALIASES[nationality] ?? null;
+}

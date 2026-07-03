@@ -4,6 +4,7 @@ import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
 import LedgerTable from '@/components/ledger/LedgerTable';
 import CalibrationTable from '@/components/ledger/CalibrationTable';
+import EmptyStateSpot from '@/components/art/EmptyStateSpot';
 import { getLedgerData } from '@/lib/queries/ledger';
 import { pct } from '@/lib/format';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME, THIRD_PARTY_LABEL } from '@/lib/constants';
@@ -85,6 +86,9 @@ export default async function LedgerPage() {
           aria-labelledby="record-heading"
           className="rounded-2xl border border-line bg-surface p-5"
         >
+          {/* Spot illustration (W6 visual pack) — decorative; the copy
+              carries the meaning. */}
+          <EmptyStateSpot variant="ledger" className="mb-4 h-16 w-auto" />
           <h2
             id="record-heading"
             className="font-display text-base font-semibold tracking-tight text-fg"

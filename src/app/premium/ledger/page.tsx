@@ -64,7 +64,7 @@ export default async function PremiumLedgerPage({ searchParams }: PremiumLedgerP
         <div className="rounded-2xl border border-line bg-surface p-5">
           <p className="text-sm leading-relaxed text-fg-dim">
             League/result filters and CSV export are part of Glass Pitch
-            Premium — £4/month or £29/year. Every prediction and the full
+            Premium — £6/month or £39/year. Every prediction and the full
             record stay free on{' '}
             <Link href="/ledger" className="text-green underline hover:text-green-bright">
               /ledger

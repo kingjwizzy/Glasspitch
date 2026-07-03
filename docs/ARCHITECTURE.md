@@ -63,7 +63,7 @@ Launches around the 2026 World Cup knockouts on a **league-agnostic** design, th
 | Monetisation | **Ready, not on:** `tier` field in content model; reserved ad slots | Premium gate on deeper analysis; vetted payment processor; ads (own domain + approval) |
 | Accounts | None | Email capture, then accounts + saved preferences |
 
-**v2 status (2026-07-03):** premium is being switched on. The gate covers **depth content only** — match insights/xG, ledger CSV export and filters. **The full prediction set and the complete scored ledger stay free forever**: gating them would destroy both the moat (§1) and the compliance asset (§13). Ads remain off. Pricing: £4/month or £29/year (Stripe; test mode until vetting + sign-off).
+**v2 status (2026-07-03):** premium is being switched on. The gate covers **depth content only** — match insights/xG, ledger CSV export and filters. **The full prediction set and the complete scored ledger stay free forever**: gating them would destroy both the moat (§1) and the compliance asset (§13). Ads remain off. Pricing: £6/month or £39/year (Stripe; test mode until vetting + sign-off).
 
 ---
 

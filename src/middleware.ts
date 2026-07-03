@@ -3,9 +3,9 @@ import { createServerClient } from '@supabase/ssr';
 
 // v2 premium auth middleware (ARCHITECTURE.md §0/§5 v2 amendment, §7).
 //
-// Scoped to EXACTLY the five auth/premium/billing prefixes below via
+// Scoped to EXACTLY the auth/premium/billing/game prefixes below via
 // `config.matcher` — every public, DB-read page (/, /match/[id], /team/[slug],
-// /league/[slug], /ledger, /about, /responsible-gambling, the new /privacy,
+// /league/[slug], /ledger, /board, /about, /responsible-gambling, /privacy,
 // /terms, /refunds) never enters this file at all, so their ISR/full-route
 // cache is completely untouched (verified in the build output — see the
 // frontend-dev report). Two jobs happen here:
@@ -75,5 +75,18 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/login', '/auth/:path*', '/account/:path*', '/premium/:path*', '/api/stripe/:path*'],
+  // /play is in the matcher for job 1 only (session-cookie refresh — it's the
+  // primary authed surface, so a returning visitor's expiring session must be
+  // renewable from a page render). It is deliberately NOT in `requiresAuth`:
+  // anonymous /play renders a public explainer, and /play/join/[code] must
+  // work for a signed-out invitee.
+  matcher: [
+    '/login',
+    '/auth/:path*',
+    '/account/:path*',
+    '/premium/:path*',
+    '/api/stripe/:path*',
+    '/play',
+    '/play/:path*',
+  ],
 };

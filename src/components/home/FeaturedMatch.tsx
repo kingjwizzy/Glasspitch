@@ -29,10 +29,14 @@ const TINT: Record<MatchResult, string> = {
   away: 'text-away',
 };
 
+// Labels are resolved per-fixture below (team names, not generic "Home"/
+// "Away" — W6 owner UX decision: a neutral-venue World Cup makes home/away a
+// confusing signal). The letter chip stays as a secondary marker beside the
+// name, never the sole signal.
 const OUTCOMES = [
-  { key: 'home' as const, letter: 'H', label: 'Home', chip: 'bg-home' },
-  { key: 'draw' as const, letter: 'D', label: 'Draw', chip: 'bg-draw' },
-  { key: 'away' as const, letter: 'A', label: 'Away', chip: 'bg-away' },
+  { key: 'home' as const, letter: 'H', chip: 'bg-home' },
+  { key: 'draw' as const, letter: 'D', chip: 'bg-draw' },
+  { key: 'away' as const, letter: 'A', chip: 'bg-away' },
 ];
 
 export default function FeaturedMatch({
@@ -52,6 +56,8 @@ export default function FeaturedMatch({
   const probs = pred
     ? { home: pred.prob_home, draw: pred.prob_draw, away: pred.prob_away }
     : null;
+  const outcomeLabel = (key: MatchResult) =>
+    key === 'home' ? fixture.home : key === 'away' ? fixture.away : 'Draw';
 
   return (
     <Link
@@ -104,7 +110,7 @@ export default function FeaturedMatch({
               only signal: every figure prints its %, letter chip and word. */}
           <dl className="grid grid-cols-3 gap-2">
             {OUTCOMES.map((o) => (
-              <div key={o.key} className="flex flex-col gap-1.5">
+              <div key={o.key} className="flex min-w-0 flex-col gap-1.5">
                 <dd
                   className={`order-2 font-mono text-[28px] font-medium leading-none lg:text-[40px] ${
                     fav.key === o.key ? TINT[o.key] : 'text-fg'
@@ -112,14 +118,14 @@ export default function FeaturedMatch({
                 >
                   {pct(probs[o.key])}
                 </dd>
-                <dt className="order-1 flex items-center gap-1.5 text-xs text-fg-dim">
+                <dt className="order-1 flex min-w-0 items-center gap-1.5 text-xs text-fg-dim">
                   <span
                     aria-hidden="true"
-                    className={`${o.chip} inline-flex h-4 w-4 items-center justify-center rounded-[3px] text-[10px] font-semibold text-bg`}
+                    className={`${o.chip} inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-[10px] font-semibold text-bg`}
                   >
                     {o.letter}
                   </span>
-                  {o.label}
+                  <span className="truncate">{outcomeLabel(o.key)}</span>
                 </dt>
               </div>
             ))}
@@ -130,6 +136,8 @@ export default function FeaturedMatch({
             home={pred.prob_home}
             draw={pred.prob_draw}
             away={pred.prob_away}
+            homeLabel={fixture.home}
+            awayLabel={fixture.away}
             className="mt-4"
           />
 

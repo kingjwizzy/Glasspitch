@@ -26,6 +26,14 @@ export interface ProbabilityBarProps {
   /** Bar only, no per-outcome legend (for dense rows). */
   compact?: boolean;
   variant?: ProbabilityBarVariant;
+  /** Team names to show instead of the generic "Home"/"Away" wording, on the
+   *  `legend` variant's per-outcome labels and the bar's accessible label —
+   *  neutral-venue tournament matches make "home/away" a confusing signal, so
+   *  any caller with team names in scope should pass them (owner UX decision,
+   *  W6). Draw always reads "Draw"/"draw". Omit to keep the generic wording
+   *  (every other caller/variant, unchanged). */
+  homeLabel?: string;
+  awayLabel?: string;
 }
 
 const SEGMENTS = [
@@ -47,6 +55,8 @@ export default function ProbabilityBar({
   className,
   compact = false,
   variant = 'legend',
+  homeLabel,
+  awayLabel,
 }: ProbabilityBarProps) {
   const values: Record<(typeof SEGMENTS)[number]['key'], number> = {
     home,
@@ -55,7 +65,9 @@ export default function ProbabilityBar({
   };
   // Guard against a zero sum so segment widths stay well-defined.
   const total = home + draw + away || 1;
-  const label = `Home ${pct(home)}, draw ${pct(draw)}, away ${pct(away)}`;
+  const homeWord = homeLabel ?? 'Home';
+  const awayWord = awayLabel ?? 'away';
+  const label = `${homeWord} ${pct(home)}, draw ${pct(draw)}, ${awayWord} ${pct(away)}`;
 
   return (
     <div className={className}>
@@ -92,22 +104,31 @@ export default function ProbabilityBar({
 
       {variant === 'legend' && !compact && (
         <dl className="mt-2.5 grid grid-cols-3 gap-2 text-center">
-          {SEGMENTS.map((s) => (
-            <div key={s.key} className="flex flex-col items-center gap-1">
-              <dt className="flex items-center gap-1.5 text-xs text-fg-dim">
-                <span
-                  aria-hidden="true"
-                  className={`${s.chip} inline-flex h-4 w-4 items-center justify-center rounded-[3px] text-[10px] font-semibold text-bg`}
-                >
-                  {s.letter}
-                </span>
-                {s.label}
-              </dt>
-              <dd className="font-mono text-sm font-medium text-fg">
-                {pct(values[s.key])}
-              </dd>
-            </div>
-          ))}
+          {SEGMENTS.map((s) => {
+            // Team names replace the generic word when the caller has them in
+            // scope (neutral-venue matches make "home/away" ambiguous); the
+            // H/D/A chip stays as a secondary marker, never the sole signal.
+            const outcomeText =
+              s.key === 'home' ? (homeLabel ?? s.label)
+              : s.key === 'away' ? (awayLabel ?? s.label)
+              : s.label;
+            return (
+              <div key={s.key} className="flex min-w-0 flex-col items-center gap-1">
+                <dt className="flex min-w-0 items-center gap-1.5 text-xs text-fg-dim">
+                  <span
+                    aria-hidden="true"
+                    className={`${s.chip} inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-[10px] font-semibold text-bg`}
+                  >
+                    {s.letter}
+                  </span>
+                  <span className="truncate">{outcomeText}</span>
+                </dt>
+                <dd className="font-mono text-sm font-medium text-fg">
+                  {pct(values[s.key])}
+                </dd>
+              </div>
+            );
+          })}
         </dl>
       )}
     </div>

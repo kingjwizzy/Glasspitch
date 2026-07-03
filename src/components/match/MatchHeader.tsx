@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import LivePill from '@/components/LivePill';
 import TeamFlag from '@/components/TeamFlag';
+import MatchAtmosphere from '@/components/art/MatchAtmosphere';
 import { formatKickoff, scoreLine } from '@/lib/format';
 import type { FixtureStatus } from '@/lib/types';
 
@@ -93,7 +94,13 @@ export default function MatchHeader({
     finalAway !== null;
 
   return (
-    <header className="rounded-2xl border border-line bg-surface p-5">
+    <header className="relative isolate overflow-hidden rounded-2xl border border-line bg-surface p-5">
+      {/* Atmosphere backdrop (W6 visual pack): anonymous stand roofline +
+          floodlight beams behind the header content at whisper opacity —
+          decorative only, AA on the text untouched (DESIGN.md §7). The
+          header isolates, so the backdrop's -z-10 sits above the card
+          surface but under every line of content. */}
+      <MatchAtmosphere />
       <div className="flex items-center justify-between gap-3">
         {league ? <CompetitionName name={league} slug={leagueSlug} /> : <span />}
         <StatusPill status={status} />

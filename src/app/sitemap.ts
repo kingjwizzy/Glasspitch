@@ -42,6 +42,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily',
       priority: 0.5,
     },
+    // W6 public surfaces: the free Gameweek Board + Fixture Ticker (nightly
+    // data) and the /play explainer (the game itself is authed and noindexed
+    // — only the public landing view belongs here).
+    // W6: World Cup chances — the daily-simulated flagship (public ISR).
+    { url: `${SITE_URL}/chances`, changeFrequency: 'daily', priority: 0.7 },
+    { url: `${SITE_URL}/board`, changeFrequency: 'daily', priority: 0.6 },
+    { url: `${SITE_URL}/board/ticker`, changeFrequency: 'daily', priority: 0.5 },
+    { url: `${SITE_URL}/play`, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${SITE_URL}/about`, changeFrequency: 'weekly', priority: 0.6 },
     { url: `${SITE_URL}/methodology`, changeFrequency: 'monthly', priority: 0.5 },
     {

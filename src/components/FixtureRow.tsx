@@ -12,9 +12,29 @@ import type { FixtureRowView } from '@/lib/queries/fixtures';
 // weight, loser dims — the no-crest answer), a right-aligned mono score column
 // in a reserved slot (zero shift as the row morphs), and a slim H/D/A bar with
 // its percentages always printed. Colour is never the only signal: the bar
-// prints its numbers, the ✓/✗ badge carries an icon + aria-label, and the
-// decorative flags are aria-hidden beside plain-text names (§13; national
-// flags are sanctioned — see components/TeamFlag.tsx).
+// prints its numbers, the ✓/✗ badge carries an icon + aria-label, the tiny
+// H/A chip beside each team name carries its letter too (W6: neutral-venue
+// matches make home/away ambiguous, so the chip is a secondary marker beside
+// the plain-text name, never the sole signal), and the decorative flags are
+// aria-hidden beside plain-text names (§13; national flags are sanctioned —
+// see components/TeamFlag.tsx).
+
+const SIDE_CHIP = {
+  home: { letter: 'H', chip: 'bg-home' },
+  away: { letter: 'A', chip: 'bg-away' },
+} as const;
+
+function SideChip({ side }: { side: 'home' | 'away' }) {
+  const { letter, chip } = SIDE_CHIP[side];
+  return (
+    <span
+      aria-hidden="true"
+      className={`${chip} inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-semibold text-bg`}
+    >
+      {letter}
+    </span>
+  );
+}
 
 function StatusGutter({ f }: { f: FixtureRowView }) {
   if (f.status === 'live') {
@@ -77,10 +97,12 @@ export default function FixtureRow({ fixture: f }: { fixture: FixtureRowView }) 
           <StatusGutter f={f} />
           <div className="min-w-0 space-y-1">
             <p className={`flex items-center gap-2 truncate text-[15px] ${homeCls}`}>
+              <SideChip side="home" />
               <TeamFlag name={f.home} />
               {f.home}
             </p>
             <p className={`flex items-center gap-2 truncate text-[15px] ${awayCls}`}>
+              <SideChip side="away" />
               <TeamFlag name={f.away} />
               {f.away}
             </p>

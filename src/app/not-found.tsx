@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import NotFoundArt from '@/components/art/NotFoundArt';
 
 // Root 404 (ARCHITECTURE.md §11) for any unmatched top-level path. The three
 // dynamic routes each carry their own themed not-found.tsx for their specific
@@ -15,13 +16,16 @@ export const metadata: Metadata = {
 export default function NotFound() {
   return (
     <div className="mx-auto max-w-md py-12 text-center">
+      {/* The ball went wide (W6 visual pack) — decorative; the copy carries
+          the meaning. */}
+      <NotFoundArt className="mx-auto mb-6 h-28 w-auto" />
       <p className="font-mono text-sm text-fg-dim">404</p>
       <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-fg">
         Page not found
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-fg-dim">
-        We couldn&rsquo;t find that page — it may have moved, or the link may
-        be out of date.
+        That one went wide of the post — the page may have moved, or the link
+        may be out of date.
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-3">
         <Link

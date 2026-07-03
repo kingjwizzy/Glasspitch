@@ -4,24 +4,13 @@
 // The hand-written domain types in ./types.ts remain the canonical contract the
 // UI codes against; this file is the raw row/insert/update shapes for the client.
 //
-// HAND-EXTENDED (2026-07-03, v2): the `profiles`, `subscriptions`,
-// `stripe_events` and `fixture_insights` tables below are added by hand,
-// matching the migration 0004 contract the backend-jobs lane is landing
-// concurrently (ARCHITECTURE.md §7 v2 amendment). The main session regenerates
-// this whole file from the live DB once that migration is applied — at that
-// point this hand-written block should be replaced by the generator's output,
-// not merged with it.
-//
-// HAND-EXTENDED (2026-07-03, v3): `top_scorers` (Golden Boot standings) is
-// likewise added by hand, matching the migration the backend-jobs lane is
-// landing concurrently this round — league_id FK, api_player_id, player_name,
-// team_name, nationality, goals, assists, penalties, rank, updated_at; PK
-// (league_id, api_player_id); anon-readable like fixtures. The FK constraint
-// name below (`top_scorers_league_id_fkey`) follows this schema's existing
-// `<table>_<column>_fkey` convention but is NOT verified against the live
-// migration — the web queries deliberately avoid depending on this exact
-// constraint name (see lib/queries/goldenBoot.ts), so a mismatch degrades to
-// an honest empty state rather than a broken build.
+// REGENERATED (2026-07-04, W6): migration 0007_chances_and_email.sql is now
+// applied to the live DB, so the whole file below is once again the
+// generator's plain output — `email_subscribers`, `ledger_checkpoints`,
+// `tournament_chances`, and `fixtures.round` / `fixtures.api_round` /
+// `fixtures.winner_team_id` are all generated, not hand-written (the prior
+// 2026-07-03 hand-extension is gone; regenerate wholesale after any future
+// migration rather than hand-patching this file again).
 
 export type Json =
   | string
@@ -39,9 +28,107 @@ export type Database = {
   }
   public: {
     Tables: {
+      email_subscribers: {
+        Row: {
+          confirm_token: string
+          confirmed_at: string | null
+          consented_at: string
+          created_at: string
+          email: string
+          id: string
+          unsubscribe_token: string
+        }
+        Insert: {
+          confirm_token?: string
+          confirmed_at?: string | null
+          consented_at?: string
+          created_at?: string
+          email: string
+          id?: string
+          unsubscribe_token?: string
+        }
+        Update: {
+          confirm_token?: string
+          confirmed_at?: string | null
+          consented_at?: string
+          created_at?: string
+          email?: string
+          id?: string
+          unsubscribe_token?: string
+        }
+        Relationships: []
+      }
+      fixture_insights: {
+        Row: {
+          fetched_at: string
+          fixture_id: number
+          kind: string
+          payload: Json
+          source: string
+        }
+        Insert: {
+          fetched_at?: string
+          fixture_id: number
+          kind: string
+          payload: Json
+          source?: string
+        }
+        Update: {
+          fetched_at?: string
+          fixture_id?: number
+          kind?: string
+          payload?: Json
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixture_insights_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fixture_pick_aggregates: {
+        Row: {
+          avg_prob_away: number | null
+          avg_prob_draw: number | null
+          avg_prob_home: number | null
+          fixture_id: number
+          n_picks: number
+          updated_at: string
+        }
+        Insert: {
+          avg_prob_away?: number | null
+          avg_prob_draw?: number | null
+          avg_prob_home?: number | null
+          fixture_id: number
+          n_picks?: number
+          updated_at?: string
+        }
+        Update: {
+          avg_prob_away?: number | null
+          avg_prob_draw?: number | null
+          avg_prob_home?: number | null
+          fixture_id?: number
+          n_picks?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixture_pick_aggregates_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: true
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fixtures: {
         Row: {
           api_fixture_id: number
+          api_round: string | null
           away_team_id: number
           created_at: string
           final_away_goals: number | null
@@ -50,11 +137,14 @@ export type Database = {
           id: number
           kickoff_utc: string
           league_id: number
+          round: string | null
           status: string
           updated_at: string
+          winner_team_id: number | null
         }
         Insert: {
           api_fixture_id: number
+          api_round?: string | null
           away_team_id: number
           created_at?: string
           final_away_goals?: number | null
@@ -63,11 +153,14 @@ export type Database = {
           id?: never
           kickoff_utc: string
           league_id: number
+          round?: string | null
           status?: string
           updated_at?: string
+          winner_team_id?: number | null
         }
         Update: {
           api_fixture_id?: number
+          api_round?: string | null
           away_team_id?: number
           created_at?: string
           final_away_goals?: number | null
@@ -76,8 +169,10 @@ export type Database = {
           id?: never
           kickoff_utc?: string
           league_id?: number
+          round?: string | null
           status?: string
           updated_at?: string
+          winner_team_id?: number | null
         }
         Relationships: [
           {
@@ -101,7 +196,47 @@ export type Database = {
             referencedRelation: "leagues"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "fixtures_winner_team_id_fkey"
+            columns: ["winner_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      job_runs: {
+        Row: {
+          counts: Json | null
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          id: number
+          job: string
+          ok: boolean | null
+          started_at: string
+        }
+        Insert: {
+          counts?: Json | null
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: never
+          job: string
+          ok?: boolean | null
+          started_at: string
+        }
+        Update: {
+          counts?: Json | null
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: never
+          job?: string
+          ok?: boolean | null
+          started_at?: string
+        }
+        Relationships: []
       }
       leagues: {
         Row: {
@@ -129,6 +264,101 @@ export type Database = {
           slug?: string
         }
         Relationships: []
+      }
+      ledger_checkpoints: {
+        Row: {
+          chain_hash: string
+          created_at: string
+          day: string
+          id: number
+          prev_hash: string | null
+          scored_rows: number
+        }
+        Insert: {
+          chain_hash: string
+          created_at?: string
+          day: string
+          id?: never
+          prev_hash?: string | null
+          scored_rows: number
+        }
+        Update: {
+          chain_hash?: string
+          created_at?: string
+          day?: string
+          id?: never
+          prev_hash?: string | null
+          scored_rows?: number
+        }
+        Relationships: []
+      }
+      pool_members: {
+        Row: {
+          display_name: string
+          joined_at: string
+          pool_id: string
+          user_id: string
+        }
+        Insert: {
+          display_name: string
+          joined_at?: string
+          pool_id: string
+          user_id: string
+        }
+        Update: {
+          display_name?: string
+          joined_at?: string
+          pool_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pool_members_pool_id_fkey"
+            columns: ["pool_id"]
+            isOneToOne: false
+            referencedRelation: "pools"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pool_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pools: {
+        Row: {
+          created_at: string
+          id: string
+          invite_code: string
+          name: string
+          owner_user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          invite_code?: string
+          name: string
+          owner_user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          invite_code?: string
+          name?: string
+          owner_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pools_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       predictions: {
         Row: {
@@ -207,6 +437,171 @@ export type Database = {
           },
         ]
       }
+      profiles: {
+        Row: {
+          created_at: string
+          id: string
+          is_18_plus: boolean
+          marketing_opt_in: boolean
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          is_18_plus?: boolean
+          marketing_opt_in?: boolean
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_18_plus?: boolean
+          marketing_opt_in?: boolean
+        }
+        Relationships: []
+      }
+      stripe_events: {
+        Row: {
+          id: string
+          payload: Json | null
+          received_at: string
+          type: string
+        }
+        Insert: {
+          id: string
+          payload?: Json | null
+          received_at?: string
+          type: string
+        }
+        Update: {
+          id?: string
+          payload?: Json | null
+          received_at?: string
+          type?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          cancel_at_period_end: boolean
+          created_at: string
+          current_period_end: string | null
+          id: string
+          price_id: string | null
+          status: string
+          stripe_customer_id: string
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cancel_at_period_end?: boolean
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          price_id?: string | null
+          status: string
+          stripe_customer_id: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cancel_at_period_end?: boolean
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          price_id?: string | null
+          status?: string
+          stripe_customer_id?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_probability_snapshots: {
+        Row: {
+          created_at: string
+          delta_elo_rating: number | null
+          delta_prob_win: number | null
+          elo_rating: number
+          expected_goals_against: number
+          expected_goals_for: number
+          fixture_id: number
+          is_home: boolean
+          opponent_team_id: number
+          prob_clean_sheet: number
+          prob_draw: number
+          prob_loss: number
+          prob_win: number
+          snapshot_date: string
+          team_id: number
+        }
+        Insert: {
+          created_at?: string
+          delta_elo_rating?: number | null
+          delta_prob_win?: number | null
+          elo_rating: number
+          expected_goals_against: number
+          expected_goals_for: number
+          fixture_id: number
+          is_home: boolean
+          opponent_team_id: number
+          prob_clean_sheet: number
+          prob_draw: number
+          prob_loss: number
+          prob_win: number
+          snapshot_date: string
+          team_id: number
+        }
+        Update: {
+          created_at?: string
+          delta_elo_rating?: number | null
+          delta_prob_win?: number | null
+          elo_rating?: number
+          expected_goals_against?: number
+          expected_goals_for?: number
+          fixture_id?: number
+          is_home?: boolean
+          opponent_team_id?: number
+          prob_clean_sheet?: number
+          prob_draw?: number
+          prob_loss?: number
+          prob_win?: number
+          snapshot_date?: string
+          team_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_probability_snapshots_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_probability_snapshots_opponent_team_id_fkey"
+            columns: ["opponent_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_probability_snapshots_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       teams: {
         Row: {
           api_team_id: number
@@ -239,156 +634,41 @@ export type Database = {
           },
         ]
       }
-      // ── v2 premium tables (hand-extended — see file header note) ──────
-      profiles: {
-        Row: {
-          id: string
-          created_at: string
-          is_18_plus: boolean
-          marketing_opt_in: boolean
-        }
-        Insert: {
-          id: string
-          created_at?: string
-          is_18_plus?: boolean
-          marketing_opt_in?: boolean
-        }
-        Update: {
-          id?: string
-          created_at?: string
-          is_18_plus?: boolean
-          marketing_opt_in?: boolean
-        }
-        Relationships: []
-      }
-      subscriptions: {
-        Row: {
-          id: string
-          user_id: string
-          stripe_customer_id: string | null
-          stripe_subscription_id: string | null
-          status: string
-          price_id: string | null
-          current_period_end: string | null
-          cancel_at_period_end: boolean
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          user_id: string
-          stripe_customer_id?: string | null
-          stripe_subscription_id?: string | null
-          status?: string
-          price_id?: string | null
-          current_period_end?: string | null
-          cancel_at_period_end?: boolean
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          stripe_customer_id?: string | null
-          stripe_subscription_id?: string | null
-          status?: string
-          price_id?: string | null
-          current_period_end?: string | null
-          cancel_at_period_end?: boolean
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      stripe_events: {
-        Row: {
-          id: string
-          type: string
-          received_at: string
-          payload: Json
-        }
-        Insert: {
-          id: string
-          type: string
-          received_at?: string
-          payload: Json
-        }
-        Update: {
-          id?: string
-          type?: string
-          received_at?: string
-          payload?: Json
-        }
-        Relationships: []
-      }
-      fixture_insights: {
-        Row: {
-          fixture_id: number
-          kind: string
-          payload: Json
-          source: string
-          fetched_at: string
-        }
-        Insert: {
-          fixture_id: number
-          kind: string
-          payload: Json
-          source: string
-          fetched_at?: string
-        }
-        Update: {
-          fixture_id?: number
-          kind?: string
-          payload?: Json
-          source?: string
-          fetched_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fixture_insights_fixture_id_fkey"
-            columns: ["fixture_id"]
-            isOneToOne: false
-            referencedRelation: "fixtures"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      // ── v3 stats table (hand-extended — see file header note) ──────────
       top_scorers: {
         Row: {
-          league_id: number
           api_player_id: number
-          player_name: string
-          team_name: string
-          nationality: string
+          assists: number | null
           goals: number
-          assists: number
-          penalties: number
+          league_id: number
+          nationality: string | null
+          penalties: number | null
+          player_name: string
           rank: number
+          team_name: string
           updated_at: string
         }
         Insert: {
-          league_id: number
           api_player_id: number
+          assists?: number | null
+          goals: number
+          league_id: number
+          nationality?: string | null
+          penalties?: number | null
           player_name: string
-          team_name: string
-          nationality: string
-          goals?: number
-          assists?: number
-          penalties?: number
           rank: number
+          team_name: string
           updated_at?: string
         }
         Update: {
-          league_id?: number
           api_player_id?: number
-          player_name?: string
-          team_name?: string
-          nationality?: string
+          assists?: number | null
           goals?: number
-          assists?: number
-          penalties?: number
+          league_id?: number
+          nationality?: string | null
+          penalties?: number | null
+          player_name?: string
           rank?: number
+          team_name?: string
           updated_at?: string
         }
         Relationships: [
@@ -401,12 +681,116 @@ export type Database = {
           },
         ]
       }
+      tournament_chances: {
+        Row: {
+          computed_at: string
+          p_reach_final: number | null
+          p_reach_semi: number | null
+          p_win_tournament: number
+          sims: number
+          snapshot_date: string
+          team_id: number
+        }
+        Insert: {
+          computed_at?: string
+          p_reach_final?: number | null
+          p_reach_semi?: number | null
+          p_win_tournament: number
+          sims: number
+          snapshot_date: string
+          team_id: number
+        }
+        Update: {
+          computed_at?: string
+          p_reach_final?: number | null
+          p_reach_semi?: number | null
+          p_win_tournament?: number
+          sims?: number
+          snapshot_date?: string
+          team_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_chances_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_predictions: {
+        Row: {
+          brier_score: number | null
+          created_at: string
+          fixture_id: number
+          id: string
+          prob_away: number
+          prob_draw: number
+          prob_home: number
+          result: string | null
+          scored_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          brier_score?: number | null
+          created_at?: string
+          fixture_id: number
+          id?: string
+          prob_away: number
+          prob_draw: number
+          prob_home: number
+          result?: string | null
+          scored_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          brier_score?: number | null
+          created_at?: string
+          fixture_id?: number
+          id?: string
+          prob_away?: number
+          prob_draw?: number
+          prob_home?: number
+          result?: string | null
+          scored_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_predictions_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_predictions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_pool_member: {
+        Args: { p_pool_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      is_premium: { Args: { uid: string }; Returns: boolean }
+      join_pool: {
+        Args: { p_display_name: string; p_invite_code: string }
+        Returns: Json
+      }
+      teardown_season: { Args: { p_season: number }; Returns: Json }
     }
     Enums: {
       [_ in never]: never

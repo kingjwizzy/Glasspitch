@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { NationalityFlag } from '@/components/TeamFlag';
+import GoldenBootMotif from '@/components/art/GoldenBootMotif';
 import { getGoldenBootTop15 } from '@/lib/queries/goldenBoot';
 import { SITE_NAME } from '@/lib/constants';
 
@@ -35,14 +37,18 @@ export default async function GoldenBootPage() {
 
   return (
     <article className="space-y-6">
-      <header>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
-          Golden Boot race
-        </h1>
-        <p className="mt-2 max-w-prose text-sm leading-relaxed text-fg-dim">
-          The top scorers across our tracked competitions. Plain text and
-          numbers only — no photos, no crests.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+            Golden Boot race
+          </h1>
+          <p className="mt-2 max-w-prose text-sm leading-relaxed text-fg-dim">
+            The top scorers across our tracked competitions. Names, nations
+            and numbers — no photos, no crests.
+          </p>
+        </div>
+        {/* Original flat-vector trophy motif (aria-hidden, inline — no request). */}
+        <GoldenBootMotif className="mt-1 h-16 w-16 shrink-0 text-away sm:h-20 sm:w-20" />
       </header>
 
       {scorers.length === 0 ? (
@@ -90,7 +96,18 @@ export default async function GoldenBootPage() {
                   <td className="px-3 py-2 font-mono text-fg-dim">{s.rank}</td>
                   <td className="px-3 py-2 font-medium text-fg">{s.playerName}</td>
                   <td className="px-3 py-2 text-fg-dim">{s.teamName}</td>
-                  <td className="px-3 py-2 text-fg-dim">{s.nationality ?? '—'}</td>
+                  <td className="px-3 py-2 text-fg-dim">
+                    {s.nationality ? (
+                      <span className="flex items-center gap-1.5">
+                        {/* Decorative national flag (aria-hidden) — the W6 owner
+                            request; plain text stays the identifier. */}
+                        <NationalityFlag nationality={s.nationality} />
+                        {s.nationality}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right font-mono font-medium text-fg">
                     {s.goals}
                   </td>

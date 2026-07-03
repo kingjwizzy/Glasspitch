@@ -57,16 +57,25 @@ test('/ has correct landmark structure and data-state-independent semantics', as
 
   // Heading order: h1 is present and unique (the W4 one-line kicker).
   await expect(page.locator('h1')).toHaveCount(1);
-  // The seven named sections of the W4 recomposition (hero band, matchday
-  // stream, watching, receipts, Golden Boot race, record band, sign-up
-  // end-cap) each get a visible or sr-only heading.
+  // The eight named sections of the W4 recomposition + W6 (hero band, World
+  // Cup chances circles, matchday stream, watching, receipts, Golden Boot
+  // race, record band, sign-up end-cap) each get a visible or sr-only
+  // heading.
   const namedSections = page.locator('section[aria-labelledby]');
-  await expect(namedSections).toHaveCount(7);
+  await expect(namedSections).toHaveCount(8);
 
   // ProbabilityBar uses role=img with a descriptive aria-label naming all three
   // outcomes (DESIGN.md §2: colour is never the sole signal). With preview data
   // the populated hero guarantees at least one bar, so the contract is actually
   // enforced rather than skipped.
+  //
+  // W6: the featured-match hero bar is personalised with the real team names
+  // (Brazil/Spain in the default preview fixture) instead of the generic
+  // "Home"/"away" wording — neutral-venue matches make home/away ambiguous —
+  // while every other bar on the page (row-variant fixture cards) keeps the
+  // generic wording. The pattern below accepts either: a leading outcome word
+  // (team name or "Home"), then "draw", then a trailing outcome word (team
+  // name or "away"), each followed by its percentage.
   const probBars = page.locator('[role="img"][aria-label^="Win probability"]');
   const barCount = await probBars.count();
   expect(
@@ -76,7 +85,7 @@ test('/ has correct landmark structure and data-state-independent semantics', as
   for (let i = 0; i < barCount; i++) {
     const label = await probBars.nth(i).getAttribute('aria-label');
     expect(label, `ProbabilityBar[${i}] should describe all three outcomes`).toMatch(
-      /Home \d+%, draw \d+%, away \d+%/,
+      /\S+ (?:\d+|<1|>99)%, draw (?:\d+|<1|>99)%, \S+ (?:\d+|<1|>99)%/,
     );
   }
 

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SUPPORT_EMAIL } from '@/lib/constants';
 
 const REFUNDS_TITLE = 'Cancellations & refunds';
 const REFUNDS_DESCRIPTION =
@@ -59,6 +59,15 @@ export default function RefundsPage() {
           refund once the content has started being provided, in line with UK
           digital-content rules. If you believe you were charged in error,
           contact us and we&rsquo;ll look into it.
+        </p>
+        <p className="text-sm text-fg-dim">
+          Questions?{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="underline decoration-fg-dim/40 underline-offset-2 transition-colors hover:text-fg"
+          >
+            {SUPPORT_EMAIL}
+          </a>
         </p>
       </section>
 

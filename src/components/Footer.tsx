@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { DISCLAIMER, SITE_NAME } from '@/lib/constants';
+import EmailCaptureForm from '@/components/EmailCaptureForm';
+import { DISCLAIMER, SITE_NAME, SUPPORT_EMAIL } from '@/lib/constants';
 
 // The disclaimer also lives in the global footer (ARCHITECTURE.md §13), in
 // addition to the persistent banner.
@@ -37,6 +38,14 @@ export default function Footer() {
             </li>
             <li>
               <Link
+                href="/board"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Gameweek board
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/responsible-gambling"
                 className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
               >
@@ -69,9 +78,21 @@ export default function Footer() {
             </li>
           </ul>
         </nav>
+        {/* Renders nothing until the owner switches email capture on — see
+            the component's gating notes. */}
+        <EmailCaptureForm />
         <p className="mt-4 text-xs text-fg-dim">
           {SITE_NAME} — football analysis, not betting advice. Plain-text team
           data only; no affiliation with any league, club, or competition.
+        </p>
+        <p className="mt-1.5 text-xs text-fg-dim">
+          Support:{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="underline decoration-fg-dim/40 underline-offset-2 transition-colors hover:text-fg"
+          >
+            {SUPPORT_EMAIL}
+          </a>
         </p>
       </div>
     </footer>

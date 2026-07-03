@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SUPPORT_EMAIL } from '@/lib/constants';
 
 const PRIVACY_TITLE = 'Privacy notice';
 const PRIVACY_DESCRIPTION =
@@ -49,7 +49,30 @@ export default function PrivacyPage() {
             never see or store your card number — Stripe handles payment
             details directly.
           </li>
+          <li>
+            If you play &ldquo;Beat the model&rdquo;: the match picks you save
+            and the display name you choose for each pool. Pool members see
+            that display name and — only once a fixture has kicked off — your
+            picks for it; they never see your email address.
+          </li>
         </ul>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Matchday email
+        </h2>
+        <p className="text-sm leading-relaxed text-fg-dim">
+          If you subscribe to the matchday email (no account needed), we store
+          your email address, the time you asked, and the time you confirmed.
+          It&rsquo;s double opt-in: nothing is sent beyond a single
+          confirmation email until you click the link inside it. The lawful
+          basis is your consent, which you withdraw by using the one-click
+          unsubscribe in any email — that takes effect immediately and deletes
+          your address from our mailing records entirely, not just flags it.
+          Emails are delivered by Resend, who process the address on our
+          behalf.
+        </p>
       </section>
 
       <section className="space-y-2">
@@ -87,8 +110,9 @@ export default function PrivacyPage() {
           Who we share it with
         </h2>
         <p className="text-sm leading-relaxed text-fg-dim">
-          Supabase (our database and authentication provider) and Stripe (our
-          payment processor) — both process data on our behalf, under their
+          Supabase (our database and authentication provider), Stripe (our
+          payment processor) and Resend (email delivery, if you subscribe to
+          the matchday email) — all process data on our behalf, under their
           own security and privacy commitments. We do not sell your data, and
           we do not run ads or share your data with advertisers.
         </p>
@@ -105,6 +129,15 @@ export default function PrivacyPage() {
           for anything else. If you&rsquo;re unhappy with how we&rsquo;ve
           handled your data, you can complain to the UK Information
           Commissioner&rsquo;s Office (ico.org.uk).
+        </p>
+        <p className="text-sm text-fg-dim">
+          Questions?{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="underline decoration-fg-dim/40 underline-offset-2 transition-colors hover:text-fg"
+          >
+            {SUPPORT_EMAIL}
+          </a>
         </p>
       </section>
 

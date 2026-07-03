@@ -54,7 +54,7 @@ for (const path of NEW_PAGES) {
 // cached public page can never branch on auth state, so "Sign in" is always a
 // static link to /login, which itself redirects an already-signed-in visitor
 // to /account.)
-test('primary nav shows Matches, Leagues, and a static Sign in link to /login', async ({
+test('primary nav shows Matches, Chances, Leagues, Play, and a static Sign in link to /login', async ({
   page,
 }) => {
   await page.goto('/', { waitUntil: 'load' });
@@ -66,6 +66,18 @@ test('primary nav shows Matches, Leagues, and a static Sign in link to /login', 
   await expect(primaryNav.getByRole('link', { name: 'Leagues', exact: true })).toHaveAttribute(
     'href',
     '/leagues',
+  );
+  // W6: "Chances" (the daily-simulated World Cup circles) and "Play" (the
+  // prize-free Beat the Model game) joined the nav as QUIET links — same
+  // visual weight as every other item, no badge/pulse/attention mechanics
+  // (DESIGN.md §6), and the header stays a session-unaware server component.
+  await expect(primaryNav.getByRole('link', { name: 'Chances', exact: true })).toHaveAttribute(
+    'href',
+    '/chances',
+  );
+  await expect(primaryNav.getByRole('link', { name: 'Play', exact: true })).toHaveAttribute(
+    'href',
+    '/play',
   );
   // "Sign in" sits just outside the <nav> landmark itself (Header.tsx) but is
   // still a plain static link, not a client-side auth affordance.
@@ -183,8 +195,18 @@ test('/stats/golden-boot renders a populated top-15 table or the honest empty st
     expect(rowCount).toBeLessThanOrEqual(15);
     // Rank is a plain ordinal 1..N with no gaps.
     await expect(rows.first().locator('td').first()).toHaveText('1');
-    // No photos or crests anywhere in the table (ARCHITECTURE.md §13).
-    await expect(table.locator('img')).toHaveCount(0);
+    // No photos or crests anywhere in the table (ARCHITECTURE.md §13). W6:
+    // decorative NATIONAL FLAGS are sanctioned (public-domain national
+    // symbols, same W4 sanction as team-name surfaces) — so every <img> must
+    // be a vendored flag SVG, hidden from the tree, with the plain-text
+    // nation still the identifier. Anything else (a photo, a crest) fails.
+    const imgs = table.locator('img');
+    const imgCount = await imgs.count();
+    for (let i = 0; i < imgCount; i++) {
+      await expect(imgs.nth(i)).toHaveAttribute('src', /^\/flags\/[a-z-]+\.svg$/);
+      await expect(imgs.nth(i)).toHaveAttribute('alt', '');
+      await expect(imgs.nth(i)).toHaveAttribute('aria-hidden', 'true');
+    }
   } else {
     await expect(emptyState).toBeVisible();
   }
@@ -211,9 +233,16 @@ test('home page Golden Boot section renders a populated race or the honest empty
   const rowCount = await rows.count();
   if (rowCount > 0) {
     expect(rowCount).toBeLessThanOrEqual(5);
-    // Deliberately NO flags in the Golden Boot table (nationality is a text
-    // attribute here, not a team identity — see GoldenBootRace.tsx).
-    await expect(section.locator('img')).toHaveCount(0);
+    // W6: nationality flags are sanctioned in the Golden Boot race (owner
+    // request — "flags now, faces eventually"), but only as decorative
+    // vendored flag SVGs; any photo/crest <img> still fails (§13).
+    const imgs = section.locator('img');
+    const imgCount = await imgs.count();
+    for (let i = 0; i < imgCount; i++) {
+      await expect(imgs.nth(i)).toHaveAttribute('src', /^\/flags\/[a-z-]+\.svg$/);
+      await expect(imgs.nth(i)).toHaveAttribute('alt', '');
+      await expect(imgs.nth(i)).toHaveAttribute('aria-hidden', 'true');
+    }
   } else {
     await expect(
       section.getByText('Top-scorer standings appear once the data pipeline first runs.'),

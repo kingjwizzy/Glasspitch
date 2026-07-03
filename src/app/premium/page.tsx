@@ -14,7 +14,12 @@ import { ANALYSIS_NOT_ADVICE, RESPONSIBLE_GAMBLING } from '@/lib/constants';
 export const metadata: Metadata = {
   title: 'Premium',
   description: 'What Glass Pitch Premium adds, and what stays free forever.',
-  robots: { index: false, follow: false },
+  // Indexable only once live payments are on (NEXT_PUBLIC_PREMIUM_LIVE=1 —
+  // the same env gate as the header affordance).
+  robots:
+    process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1'
+      ? undefined
+      : { index: false, follow: false },
 };
 
 const INCLUDED = [
@@ -124,8 +129,8 @@ export default async function PremiumPage() {
           </div>
         ) : canCheckout ? (
           <div className="flex gap-3">
-            <PlanForm plan="monthly" price="£4" cadence="per month" />
-            <PlanForm plan="annual" price="£29" cadence="per year" />
+            <PlanForm plan="monthly" price="£6" cadence="per month" />
+            <PlanForm plan="annual" price="£39" cadence="per year" />
           </div>
         ) : (
           <div className="rounded-2xl border border-line bg-surface p-5">

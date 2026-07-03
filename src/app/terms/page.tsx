@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SUPPORT_EMAIL } from '@/lib/constants';
 
 const TERMS_TITLE = 'Terms of use';
 const TERMS_DESCRIPTION = 'The terms for using Glass Pitch and Glass Pitch Premium.';
@@ -103,6 +103,16 @@ export default function TermsPage() {
           fraud).
         </p>
       </section>
+
+      <p className="text-sm text-fg-dim">
+        Questions?{' '}
+        <a
+          href={`mailto:${SUPPORT_EMAIL}`}
+          className="underline decoration-fg-dim/40 underline-offset-2 transition-colors hover:text-fg"
+        >
+          {SUPPORT_EMAIL}
+        </a>
+      </p>
 
       <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
         Draft pending professional (legal) review — this page has not yet been

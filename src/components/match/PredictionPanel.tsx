@@ -17,6 +17,11 @@ export interface PredictionPanelProps {
   prediction: MatchPrediction | null;
   predictionVoided: boolean;
   status: FixtureStatus;
+  /** Team names — shown in place of "Home"/"Away" in the probability legend
+   *  (W6 owner UX decision: neutral-venue World Cup matches make home/away
+   *  confusing; the H/A chip stays as a secondary marker beside the name). */
+  home: string;
+  away: string;
 }
 
 function Note({ children }: { children: React.ReactNode }) {
@@ -31,6 +36,8 @@ export default function PredictionPanel({
   prediction,
   predictionVoided,
   status,
+  home,
+  away,
 }: PredictionPanelProps) {
   if (!prediction) {
     if (predictionVoided) {
@@ -74,6 +81,8 @@ export default function PredictionPanel({
         home={prediction.prob_home}
         draw={prediction.prob_draw}
         away={prediction.prob_away}
+        homeLabel={home}
+        awayLabel={away}
       />
 
       <LockStatusLine status={prediction.status} className="mt-4" />

@@ -6,6 +6,11 @@
 
 export const SITE_NAME = 'Glass Pitch';
 
+// Customer-support address, registered with Stripe as the billing contact —
+// must be genuinely reachable and displayed near contact/questions copy
+// (terms, privacy, refunds, footer).
+export const SUPPORT_EMAIL = 'support@glasspitch.com';
+
 // Persistent compliance banner text — rendered on EVERY page by the root
 // layout (ARCHITECTURE.md §13). Exact wording is intentional.
 export const DISCLAIMER =

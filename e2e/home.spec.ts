@@ -44,10 +44,13 @@ test('/ hero band leads with the kicker, freshness stamp, and featured match', a
   // fixture, so the coarse kickoff phrase renders (never a ticking countdown).
   await expect(card.getByText(/^Kicks off /)).toBeVisible();
 
-  // The probability trio is printed (H/D/A letter + word per figure, each dd a
-  // percentage), and the hero bar keeps the full three-outcome accessible
+  // The probability trio is printed (H/D/A letter chip + the actual TEAM NAME
+  // per figure, each dd a percentage) — W6: home/away reads as ambiguous at a
+  // neutral-venue World Cup, so the trio names the real teams (Brazil v Spain
+  // is the fixed default-preview hero fixture) with the letter chip only as a
+  // secondary marker. The hero bar keeps the full three-outcome accessible
   // label (colour never the sole signal).
-  await expect(card.locator('dt')).toHaveText([/Home/, /Draw/, /Away/]);
+  await expect(card.locator('dt')).toHaveText([/Brazil/, /Draw/, /Spain/]);
   await expect(card.locator('dd')).toHaveText([
     /^(\d+|<1|>99)%$/,
     /^(\d+|<1|>99)%$/,

@@ -8,7 +8,12 @@ import ScoredResult from '@/components/match/ScoredResult';
 import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import DeeperReadCallout from '@/components/match/DeeperReadCallout';
+import InsightsPanel from '@/components/match/InsightsPanel';
 import { getMatchData, type MatchData } from '@/lib/queries/match';
+import {
+  getOpenMatchFixtureId,
+  getOpenMatchInsights,
+} from '@/lib/queries/openMatch';
 import { formatDateShort, templateRead } from '@/lib/format';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
@@ -120,6 +125,15 @@ export default async function MatchPage({ params }: MatchPageProps) {
   const data = await getMatchData(parseId(id));
   if (!data) notFound();
 
+  // "Open match of the day" (ROADMAP.md §2): if THIS fixture is today's
+  // deterministic pick (earliest kickoff today with a displayed call), its
+  // premium deeper read renders free, right here, for everyone — computed at
+  // ISR render time, identical for every visitor, so the page stays cached
+  // and viewer-agnostic. Every other fixture keeps the one quiet callout.
+  const openMatchId = await getOpenMatchFixtureId(new Date().toISOString());
+  const openInsights =
+    openMatchId === data.id ? await getOpenMatchInsights(data.id) : null;
+
   const { prediction } = data;
   const scored =
     prediction?.status === 'scored' &&
@@ -183,6 +197,8 @@ export default async function MatchPage({ params }: MatchPageProps) {
           prediction={prediction}
           predictionVoided={data.predictionVoided}
           status={data.status}
+          home={data.home}
+          away={data.away}
         />
       </section>
 
@@ -220,7 +236,23 @@ export default async function MatchPage({ params }: MatchPageProps) {
         </section>
       )}
 
-      <DeeperReadCallout fixtureId={data.id} />
+      {openInsights !== null ? (
+        <section aria-labelledby="open-read-heading">
+          <SectionHeader
+            id="open-read-heading"
+            title="Deeper read"
+            description="Today's open match — the premium deeper read, free for everyone on this page."
+          />
+          <InsightsPanel insights={openInsights} />
+          <p className="mt-2 text-xs leading-relaxed text-fg-dim">
+            One match&rsquo;s deeper read is open on every matchday, so you can
+            judge what Premium is like from the real thing — the full ledger
+            and every match&rsquo;s probabilities stay free forever either way.
+          </p>
+        </section>
+      ) : (
+        <DeeperReadCallout fixtureId={data.id} />
+      )}
 
       <LedgerCallout />
 

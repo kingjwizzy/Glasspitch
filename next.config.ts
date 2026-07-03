@@ -38,6 +38,15 @@ const CSP = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // W6 share kit: the OG image routes read vendored brand fonts and flag
+  // SVGs from the local filesystem at render time (zero network calls —
+  // src/lib/og.ts). The per-code flag read is dynamic, which static tracing
+  // can't follow, so pin the whole flag set + fonts into every traced
+  // serverless bundle explicitly (they're ~200KB total).
+  outputFileTracingIncludes: {
+    '/match/[id]/opengraph-image': ['./src/assets/og/*.ttf', './public/flags/*.svg'],
+    '/chances/opengraph-image': ['./src/assets/og/*.ttf', './public/flags/*.svg'],
+  },
   async headers() {
     return [
       {

@@ -1,6 +1,10 @@
 import type { Metadata } from 'next';
 import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
+import StadiumHero from '@/components/art/StadiumHero';
+import ChancesCloud from '@/components/chances/ChancesCloud';
+import ChancesEmpty from '@/components/chances/ChancesEmpty';
+import ChancesProvenance from '@/components/chances/ChancesProvenance';
 import FeaturedMatch from '@/components/home/FeaturedMatch';
 import ProofRail from '@/components/home/ProofRail';
 import UpcomingFixtures from '@/components/home/UpcomingFixtures';
@@ -11,6 +15,7 @@ import GoldenBootRace from '@/components/home/GoldenBootRace';
 import SignupCard from '@/components/home/SignupCard';
 import { getHomepageData } from '@/lib/queries/homepage';
 import { getGoldenBootTop5 } from '@/lib/queries/goldenBoot';
+import { getChancesData } from '@/lib/queries/chances';
 import { formatFullDate, formatTimeUtc, updatedStamp, utcDateKey } from '@/lib/format';
 import { SITE_NAME } from '@/lib/constants';
 
@@ -52,7 +57,8 @@ export default async function HomePage() {
   const [
     { hero, live, upcoming, finishedToday, watching, recentCalls, record },
     goldenBoot,
-  ] = await Promise.all([getHomepageData(), getGoldenBootTop5()]);
+    chances,
+  ] = await Promise.all([getHomepageData(), getGoldenBootTop5(), getChancesData()]);
   const renderedAt = new Date().toISOString();
   const todayKey = utcDateKey(renderedAt);
 
@@ -80,6 +86,10 @@ export default async function HomePage() {
       {/* ── Matchday hero band: featured match + ledger proof rail (W4 §1).
           The page's ONE floodlight pool sits under this band. ────────────── */}
       <section aria-labelledby="home-kicker" className="floodlight">
+        {/* Whisper-opacity stadium flourish behind the hero (W6 visual pack) —
+            layers with the floodlight pool inside this section's isolation;
+            text contrast is untouched (DESIGN.md §7). */}
+        <StadiumHero />
         <div className="rise-in">
           <h1
             id="home-kicker"
@@ -123,6 +133,30 @@ export default async function HomePage() {
           Below the whole hero band so an empty div never separates headline
           and match (W4 §1). */}
       <AdSlot slot="home-top" />
+
+      {/* ── World Cup chances — the owner's flagship circles, full-width
+          directly under the hero band (W6; ROADMAP.md §4 item 7). Honest
+          structural empty state until the nightly sim first runs. ───────── */}
+      <section aria-labelledby="chances-heading" className="reveal">
+        <SectionHeader
+          id="chances-heading"
+          title="World Cup chances"
+          description="Every nation still in it, sized by its chance of winning the trophy."
+          href="/chances"
+          linkLabel="The full picture"
+        />
+        {chances.teams.length > 0 ? (
+          <>
+            <ChancesCloud teams={chances.teams} />
+            <ChancesProvenance
+              sims={chances.sims}
+              snapshotDate={chances.snapshotDate}
+            />
+          </>
+        ) : (
+          <ChancesEmpty />
+        )}
+      </section>
 
       {/* ── Today & upcoming — the matchday stream (W4 §2). ─────────────── */}
       <section aria-labelledby="stream-heading" className="reveal">

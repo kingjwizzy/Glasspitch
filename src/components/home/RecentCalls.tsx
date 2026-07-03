@@ -2,6 +2,7 @@ import Link from 'next/link';
 import ResultBadge from '@/components/ResultBadge';
 import ProbabilityBar from '@/components/ProbabilityBar';
 import LedgerPipeline from '@/components/home/LedgerPipeline';
+import EmptyStateSpot from '@/components/art/EmptyStateSpot';
 import {
   formatDateTimeShort,
   outcomeName,
@@ -99,11 +100,15 @@ function ReceiptRow({ c }: { c: RecentCallView }) {
 export default function RecentCalls({ calls }: { calls: RecentCallView[] }) {
   if (calls.length === 0) {
     return (
-      <div className="glass p-5">
-        <LedgerPipeline />
-        <p className="mt-3 text-sm text-fg-dim">
-          The record opens after the first final whistle — misses included.
-        </p>
+      <div className="glass flex items-center gap-5 p-5">
+        {/* Receipt spot illustration (W6 visual pack) — decorative. */}
+        <EmptyStateSpot variant="receipts" className="h-16 w-auto shrink-0" />
+        <div className="min-w-0">
+          <LedgerPipeline />
+          <p className="mt-3 text-sm text-fg-dim">
+            The record opens after the first final whistle — misses included.
+          </p>
+        </div>
       </div>
     );
   }

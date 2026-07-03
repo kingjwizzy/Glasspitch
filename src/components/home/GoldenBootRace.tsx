@@ -1,14 +1,16 @@
+import { NationalityFlag } from '@/components/TeamFlag';
 import type { TopScorerView } from '@/lib/queries/goldenBoot';
 
 // Golden Boot race — home item 5 (DESIGN.md §4), W4 slot contract: a .glass
 // card with ~320px reserved height (zero CLS while data arrives), a
 // hairline-ruled table — rank gutter · name · nation · right-aligned mono
 // goals — whose dense aligned-numbers texture is deliberately part of the
-// instrument-panel register. Text and numbers only: no photos, crests, or
-// flags here (ARCHITECTURE.md §13; the W4 flag sanction covers team-name
-// surfaces, and nationality here is a text attribute, not a team identity).
-// Ties are shown honestly ("=3"); the empty state is the same table skeleton
-// with em-dashes — never a spinner.
+// instrument-panel register. No photos or crests (ARCHITECTURE.md §13);
+// national flags beside the nationality are the W6 owner request ("flags
+// now, faces eventually") and sit under the same W4 sanction as team flags —
+// public-domain national symbols, decorative, plain text stays the
+// identifier. Ties are shown honestly ("=3"); the empty state is the same
+// table skeleton with em-dashes — never a spinner.
 
 export default function GoldenBootRace({ scorers }: { scorers: TopScorerView[] }) {
   if (scorers.length === 0) {
@@ -59,8 +61,18 @@ export default function GoldenBootRace({ scorers }: { scorers: TopScorerView[] }
                 >
                   {s.playerName}
                 </p>
-                <p className="truncate text-[13px] text-fg-dim">
-                  {s.nationality || '—'}
+                <p className="flex items-center gap-1.5 truncate text-[13px] text-fg-dim">
+                  {s.nationality ? (
+                    <>
+                      <NationalityFlag
+                        nationality={s.nationality}
+                        className="h-3.5 w-3.5"
+                      />
+                      <span className="truncate">{s.nationality}</span>
+                    </>
+                  ) : (
+                    '—'
+                  )}
                 </p>
               </div>
               <span className="shrink-0 font-mono text-base font-medium text-fg">

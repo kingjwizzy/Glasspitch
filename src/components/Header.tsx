@@ -11,7 +11,14 @@ import { SITE_NAME } from '@/lib/constants';
 const NAV = [
   { href: '/', label: 'Home' },
   { href: '/matches', label: 'Matches' },
+  // W6: the daily-simulated World Cup chances — the owner's flagship public
+  // surface; a quiet link like every other item.
+  { href: '/chances', label: 'Chances' },
   { href: '/leagues', label: 'Leagues' },
+  // Quiet, same weight as every other item (DESIGN.md §6 — no attention
+  // mechanics). /play itself renders a static explainer for anonymous
+  // visitors, so this stays a plain link with no auth awareness.
+  { href: '/play', label: 'Play' },
   { href: '/ledger', label: 'Track record' },
   { href: '/about', label: 'About' },
 ] as const;
@@ -45,6 +52,17 @@ export default function Header() {
             ))}
           </ul>
         </nav>
+        {process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1' ? (
+          // The single sitewide premium affordance (DESIGN.md §6: visible is
+          // fine, pressure is not — solid amber pill, no motion, no urgency
+          // copy). Env-gated so it appears only once live payments are on.
+          <Link
+            href="/premium"
+            className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-away px-3.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          >
+            Go Premium
+          </Link>
+        ) : null}
         <Link
           href="/login"
           className="-ml-1 inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-sm text-fg-dim transition-colors hover:text-fg"

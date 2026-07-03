@@ -35,7 +35,7 @@ research (all with live web evidence).
 
 ## 2. The revenue stack — "the honest numbers for your football week"
 
-Three layers, one SKU (£4/mo · £29/yr "Founding season 2026-27" with a
+Three layers, one SKU (£6/mo · £39/yr "Founding season 2026-27" with a
 plain permanent price-lock; no urgency/scarcity copy ever — DESIGN §6):
 
 | Layer | What | When |
