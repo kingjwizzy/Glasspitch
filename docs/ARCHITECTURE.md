@@ -105,6 +105,10 @@ flowchart TD
 
 **Billing data flow (v2, 2026-07-03):** Stripe → webhook route handler (signature-verified, idempotent via `stripe_events`) → Supabase billing tables (`profiles`, `subscriptions`) → RLS gates premium reads. The webhook writer holds grants on billing tables **only** — it physically cannot touch football data, and the jobs never touch billing data.
 
+**Game-picks data flow (v3 amendment, owner-approved 2026-07-03):** authenticated users may write **their own predictions in the Beat the Model game** (`user_predictions` + pools tables) through RLS owner-scoped policies (`auth.uid() = user_id`, insert/update only while the fixture is unlocked — enforced by trigger against `fixtures.kickoff_utc`, mirroring the ledger's lock discipline). This writer class touches game tables **only**; the football tables and the model's ledger remain jobs-only. Scoring of user picks is a jobs-layer concern (reuses the Brier machinery).
+
+**Second data source (v3 amendment, owner-approved 2026-07-03):** the official Fantasy Premier League API joins API-Football as a jobs-layer source (fixture difficulty/ownership/pricing context for FPL tooling). The golden rule is unchanged: only the scheduled jobs call external APIs; ToS reviewed at implementation; no scraping.
+
 **Main services:** API-Football (data), Supabase (Postgres + auth-ready), Vercel (web hosting + cron or an external scheduler), Sentry (errors), Plausible or GA4 (analytics).
 
 **Failure points & handling**
