@@ -102,3 +102,18 @@ PREDICTION_FETCH_WINDOW_HOURS: float = float(
 POSTPONED_VOID_HORIZON_DAYS: int = int(
     os.environ.get("POSTPONED_VOID_HORIZON_DAYS") or "45"
 )
+
+# --- W5: Beat the Model pools + Gameweek Board/Fixture Ticker snapshots ------
+# (ARCHITECTURE.md v3 §5, ROADMAP.md §2/§4, migration 0006). Both jobs below
+# are DB-only -- no football-API call, so no request-budget interaction.
+
+# jobs/snapshot_probabilities.py: how far ahead (from "now") a fixture is
+# still snapshotted for the free Gameweek Board / Fixture Ticker. Wider than
+# PREDICTION_FETCH_WINDOW_HOURS on purpose -- the board/ticker are meant to
+# show several gameweeks of upcoming fixture difficulty, not just the
+# next-72h window the ledger's own third-party fetch cares about. Reuses
+# jobs/db.py's existing upcoming_fixtures_within(hours) (no new DB read
+# method needed).
+SNAPSHOT_FIXTURE_WINDOW_HOURS: float = float(
+    os.environ.get("SNAPSHOT_FIXTURE_WINDOW_HOURS") or str(24 * 14)
+)

@@ -275,7 +275,7 @@ For one match with predicted probabilities `p_home, p_draw, p_away` and the actu
 
 **Marketing rules (for when you promote it):** nothing may have strong appeal to under-18s; never imply betting solves money problems or guarantees gains; every performance claim must be true and provable (the ledger is exactly this). The transparency record is your compliance asset — use it instead of hype.
 
-**IP rules:** plain-text team names only. **No** team crests, player photographs, club badges, or official tournament marks (e.g. World Cup logos). Original design only.
+**IP rules:** plain-text team names remain the primary identifier everywhere. **No** club crests, player photographs, club badges, or official tournament marks (e.g. World Cup logos). *Amended 2026-07-03 (owner):* **national flags are sanctioned** — public-domain state symbols, not licensed IP — rendered as decorative (aria-hidden) imagery beside the text name (vendored MIT-licensed circle-flags set, attribution committed). Club-era identity uses kit-color chips + monograms, never crests. Original design only otherwise.
 
 **Data / privacy:** v1 holds **no personal data** and uses **no personal-data scraping** (no social-media monitoring of players or anyone else — public ≠ free to process). Football data comes from licensed providers. **If accounts are added later:** publish a privacy notice, register with the ICO if required, capture only what's needed, support access/deletion requests, and use a lawful basis for any email marketing.
 

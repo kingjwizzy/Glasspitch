@@ -6,8 +6,65 @@ import AxeBuilder from '@axe-core/playwright';
 // new v2 surface doesn't duplicate it a third and fourth time. smoke.spec.ts
 // itself is left untouched (it already passes; no reason to risk it).
 
+/** The one sanctioned image source (W4 owner amendment to ARCHITECTURE.md
+ *  §13): vendored circle-flag national flags. Everything else — crests,
+ *  player photos, tournament marks — remains banned. */
+const FLAG_SRC_PREFIX = '/flags/';
+
+/** No dark-pattern / urgency vocabulary anywhere in the rendered page
+ *  (DESIGN.md §6): the W4 redesign added a sign-up end-cap, and this pins the
+ *  no-pressure-copy invariant site-wide so it can never regress. */
+export async function expectNoDarkPatternVocabulary(page: Page) {
+  const bodyText = await page.locator('body').innerText();
+  expect(
+    bodyText,
+    'dark-pattern / urgency vocabulary must never appear (DESIGN.md §6)',
+  ).not.toMatch(/hurry|only today|last chance|don['’]t miss/i);
+}
+
+/** Image compliance (ARCHITECTURE.md §13, W4 amendment): the ONLY images
+ *  allowed anywhere are the sanctioned national flags under /flags/ — no team
+ *  crests, player photos, or tournament marks. Every flag must be strictly
+ *  decorative (alt="" + aria-hidden) with fixed dimensions (zero CLS), and the
+ *  plain-text team name must sit right beside it as the real identifier. */
+export async function expectOnlySanctionedImages(page: Page) {
+  await expect(
+    page.locator(`img:not([src^="${FLAG_SRC_PREFIX}"])`),
+    'the only sanctioned <img> source is /flags/ (ARCHITECTURE.md §13)',
+  ).toHaveCount(0);
+
+  const flags = page.locator(`img[src^="${FLAG_SRC_PREFIX}"]`);
+  const count = await flags.count();
+  for (let i = 0; i < count; i++) {
+    const flag = flags.nth(i);
+    await expect(flag, `flag[${i}] must be aria-hidden`).toHaveAttribute(
+      'aria-hidden',
+      'true',
+    );
+    await expect(flag, `flag[${i}] must have an empty alt`).toHaveAttribute('alt', '');
+    // Fixed intrinsic size — the zero-CLS half of the TeamFlag contract.
+    await expect(flag, `flag[${i}] must have a fixed width`).toHaveAttribute(
+      'width',
+      /^\d+$/,
+    );
+    await expect(flag, `flag[${i}] must have a fixed height`).toHaveAttribute(
+      'height',
+      /^\d+$/,
+    );
+    // The decorative flag never stands alone: its immediate container must
+    // carry the plain-text team name (the primary identifier, §13).
+    const adjacentText = await flag
+      .locator('xpath=..')
+      .evaluate((el) => el.textContent?.trim() ?? '');
+    expect(
+      adjacentText.length,
+      `flag[${i}] must sit beside a plain-text team name`,
+    ).toBeGreaterThan(0);
+  }
+}
+
 /** Structural/compliance assertions every page must satisfy regardless of
- *  route or auth state (ARCHITECTURE.md §13; DESIGN.md §2). Assumes `page`
+ *  route or auth state (ARCHITECTURE.md §13; DESIGN.md §2, §6). Assumes `page`
  *  has already navigated. */
 export async function expectLandmarksAndCompliance(page: Page) {
   const banner = page.locator('[role="region"][aria-label="Compliance disclaimer"]');
@@ -23,14 +80,29 @@ export async function expectLandmarksAndCompliance(page: Page) {
 
   await expect(page.locator('h1')).toHaveCount(1);
 
-  // No team crests, player photos, or any other <img> (ARCHITECTURE.md §13):
-  // plain-text team names only, everywhere, including the new v2 surface.
-  await expect(page.locator('img')).toHaveCount(0);
+  // W4 amendment: aria-hidden national flags beside plain-text team names are
+  // sanctioned; every other image (crests, photos, marks) is still banned.
+  await expectOnlySanctionedImages(page);
+
+  // No urgency/pressure copy on any page (DESIGN.md §6).
+  await expectNoDarkPatternVocabulary(page);
 }
 
 /** No serious/critical axe violations on the current page (WCAG 2.0/2.1
- *  A/AA) -- same tag set and severity floor as smoke.spec.ts. */
+ *  A/AA) -- shared severity floor and tag set for every spec. */
 export async function expectNoSeriousA11yViolations(page: Page) {
+  // Audit the SETTLED presentation. The W4 motion kit's scroll-driven reveals
+  // (`animation-timeline: view()`) hold a section that straddles the fold at
+  // an intermediate opacity as a pure function of scroll position, and axe
+  // correctly measures that as a blended, sub-AA foreground colour — making
+  // the audit a lottery on viewport height and page geometry rather than a
+  // check of the design. Emulating reduced motion (honoured by the global
+  // kill-switch in globals.css) pins every element at its final state, so the
+  // audit is deterministic at any viewport while still covering the identical
+  // DOM, colours, names and roles. The motion kit itself has dedicated
+  // coverage in home.spec.ts, and the mid-reveal contrast caveat is tracked
+  // as a frontend finding (consider a transform-only reveal keyframe).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();

@@ -50,7 +50,16 @@ export default async function GoldenBootPage() {
           Top-scorer standings appear once the data pipeline first runs.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+        <div
+          // Horizontally scrollable on narrow viewports, so keyboard users
+          // need to be able to focus and scroll it (axe
+          // scrollable-region-focusable); the global :focus-visible ring
+          // marks it, and the region name mirrors the table caption.
+          role="region"
+          aria-label="Top 15 goalscorers, ranked"
+          tabIndex={0}
+          className="overflow-x-auto rounded-xl border border-line bg-surface"
+        >
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Top 15 goalscorers, ranked</caption>
             <thead>

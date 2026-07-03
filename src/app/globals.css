@@ -107,3 +107,124 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── The glass layer (W4 homepage spec; DESIGN.md §1 "layered-glass surface").
+   Depth from light, not shadows: a lightness-step body gradient with a gradient
+   hairline border — light always rakes from top-left at 160deg, site-wide. The
+   endpoint #131917 is a darkened step of --surface (part of the recipe, not a
+   new token); no new colour tokens are introduced. ────────────────────────── */
+.glass {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background:
+    linear-gradient(160deg, var(--surface), #131917) padding-box,
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 55%)
+      border-box;
+}
+
+/* Promoted surfaces only (exactly three on the home page: featured match,
+   proof-rail tiles, record band). Four-layer stack: 1px inset top rim-light,
+   inner hairline, deep drop, and one low-alpha green ambient glow — the glow
+   derives from --green #35B27A. */
+.glass-raised {
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, var(--surface), #131917) padding-box,
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 55%)
+      border-box;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 24px 48px -12px rgba(0, 0, 0, 0.45),
+    0 4px 24px rgba(53, 178, 122, 0.08);
+}
+
+/* Interactive-card hover/press — brighten-don't-recolor: filter lifts card,
+   border and content together and can never drift off-token (1.12, not 1.25 —
+   too much on this green-tinted palette). Transitions are killed by the
+   global reduced-motion rule above. */
+.card-interactive {
+  transition:
+    filter 200ms ease-out,
+    transform 200ms ease-out;
+}
+.card-interactive:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+.card-interactive:active {
+  transform: scale(0.98);
+}
+
+/* The page's ONE floodlight: a green radial pool anchored top-centre of the
+   hero, plus a static grain overlay (inline SVG feTurbulence — data URI, no
+   request, ~0.4KB) that kills gradient banding. Both are decorative
+   pseudo-elements behind the content (isolation + negative z-index), fully
+   static, zero JS. Hero band only — one floodlight per page. */
+.floodlight {
+  position: relative;
+  isolation: isolate;
+}
+.floodlight::before {
+  content: "";
+  position: absolute;
+  inset: -1.5rem -1rem 0;
+  z-index: -1;
+  background: radial-gradient(
+    90% 60% at 50% 0%,
+    rgba(53, 178, 122, 0.12),
+    transparent 60%
+  );
+  pointer-events: none;
+}
+.floodlight::after {
+  content: "";
+  position: absolute;
+  inset: -1.5rem -1rem 0;
+  z-index: -1;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ── CSS-only motion kit (W4 spec "motion"; DESIGN.md §5). Everything sits
+   behind prefers-reduced-motion: no-preference (the global kill-switch above
+   stays as belt-and-braces); every effect degrades to the static final state
+   and no meaning is ever carried by motion. ───────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+  }
+
+  /* Once-on-load hero stagger: 500ms ease-out, 70ms delay steps. */
+  .rise-in {
+    animation: rise-in 500ms ease-out both;
+  }
+  .rise-in-1 {
+    animation-delay: 70ms;
+  }
+  .rise-in-2 {
+    animation-delay: 140ms;
+  }
+  .rise-in-3 {
+    animation-delay: 210ms;
+  }
+
+  /* Scroll-driven section reveals, JS-free: compositor-driven where
+     animation-timeline is supported; Safari and other unsupporting browsers
+     simply render content instantly (the correct fallback — no
+     IntersectionObserver, zero client JS). */
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation: rise-in linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 30%;
+    }
+  }
+}

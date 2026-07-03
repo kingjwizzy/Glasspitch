@@ -20,6 +20,8 @@ All functions are pure and standard-library only so the maths is easy to verify.
 
 from __future__ import annotations
 
+import math
+
 # --- Tunable constants (documented defaults) ---------------------------------
 DEFAULT_RATING: float = 1500.0
 # K-factor: how strongly a single result moves ratings. 20 is a common club
@@ -116,6 +118,103 @@ def predicted_scoreline(
     home_goals = round(total_goals * expected_home)
     away_goals = round(total_goals * (1.0 - expected_home))
     return (int(home_goals), int(away_goals))
+
+
+def expected_goals(
+    home_rating: float,
+    away_rating: float,
+    home_advantage: float = HOME_ADVANTAGE,
+    total_goals: float = EXPECTED_TOTAL_GOALS,
+) -> tuple[float, float]:
+    """Continuous (un-rounded) expected goals for the home/away side.
+
+    Splits ``total_goals`` between the two sides in proportion to the
+    home-advantage-adjusted expected score -- the SAME convention
+    :func:`predicted_scoreline` uses to build a display scoreline, but this
+    returns raw floats rather than a rounded integer pair, so downstream
+    probability maths (e.g. :func:`clean_sheet_probability`) works from the
+    un-rounded figure instead of compounding rounding error (ARCHITECTURE.md
+    v3 §5, jobs/snapshot_probabilities.py).
+    """
+    expected_home = expected_score(home_rating + home_advantage, away_rating)
+    home_goals = total_goals * expected_home
+    away_goals = total_goals * (1.0 - expected_home)
+    return (home_goals, away_goals)
+
+
+def clean_sheet_probability(goals_against_expected: float) -> float:
+    """P(a team concedes zero) from its opponent's expected goals.
+
+    Modelled as a Poisson(lambda=``goals_against_expected``) count of goals
+    conceded: ``P(X = 0) = exp(-lambda)``. This is the standard, simple
+    clean-sheet estimator for a Poisson goals model and is consistent with
+    :data:`EXPECTED_TOTAL_GOALS`'s baseline-goals convention used elsewhere in
+    this module. Like :func:`match_probabilities`, this is good enough for a
+    silently-logged / free Gameweek Board estimate (§9's "not a claim of a
+    well-calibrated full goals distribution" caveat applies here too) --
+    never a claim of a fully calibrated goals distribution.
+
+    ``goals_against_expected`` is clamped to >= 0 so a (theoretically
+    impossible, but defensive) negative input can never produce
+    ``exp(positive)`` > 1.
+    """
+    return math.exp(-max(goals_against_expected, 0.0))
+
+
+def team_snapshot_metrics(
+    home_rating: float,
+    away_rating: float,
+    *,
+    home_advantage: float = HOME_ADVANTAGE,
+    draw_max: float = DRAW_MAX,
+    total_goals: float = EXPECTED_TOTAL_GOALS,
+) -> dict[str, dict[str, float]]:
+    """Full per-side snapshot metrics for one fixture, from a single mutually
+    consistent set of underlying ratings (jobs/snapshot_probabilities.py,
+    ARCHITECTURE.md v3 §5).
+
+    Combines :func:`match_probabilities` (three-way H/D/A), :func:`expected_goals`
+    (the continuous home/away split), and :func:`clean_sheet_probability` (each
+    side's clean-sheet chance, from the OPPONENT's expected goals) for BOTH
+    sides of the fixture. Returns ``{'home': {...}, 'away': {...}}``, each with:
+
+    * ``prob_win`` / ``prob_draw`` / ``prob_loss`` -- three-way outcome
+      probabilities from this side's point of view (so ``away.prob_win`` is
+      ``home.prob_loss`` and vice versa; ``prob_draw`` is shared).
+    * ``expected_goals_for`` / ``expected_goals_against`` -- this side's
+      continuous expected goals scored/conceded.
+    * ``prob_clean_sheet`` -- ``clean_sheet_probability(expected_goals_against)``.
+
+    Deriving all of these from ONE call keeps them mutually consistent (the
+    win/draw/loss split, the goal expectations, and the clean-sheet estimate
+    can never independently drift apart from each other for the same
+    fixture), rather than computing each metric separately and risking them
+    disagreeing on the underlying ratings.
+    """
+    probs = match_probabilities(
+        home_rating, away_rating, home_advantage=home_advantage, draw_max=draw_max
+    )
+    home_goals, away_goals = expected_goals(
+        home_rating, away_rating, home_advantage=home_advantage, total_goals=total_goals
+    )
+    return {
+        "home": {
+            "prob_win": probs["home"],
+            "prob_draw": probs["draw"],
+            "prob_loss": probs["away"],
+            "expected_goals_for": home_goals,
+            "expected_goals_against": away_goals,
+            "prob_clean_sheet": clean_sheet_probability(away_goals),
+        },
+        "away": {
+            "prob_win": probs["away"],
+            "prob_draw": probs["draw"],
+            "prob_loss": probs["home"],
+            "expected_goals_for": away_goals,
+            "expected_goals_against": home_goals,
+            "prob_clean_sheet": clean_sheet_probability(home_goals),
+        },
+    }
 
 
 def ratings_from_results(

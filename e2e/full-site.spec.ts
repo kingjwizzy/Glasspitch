@@ -35,7 +35,9 @@ for (const path of NEW_PAGES) {
     await gotoAndExpectNoRuntimeErrors(page, path);
   });
 
-  test(`${path} has the shared landmarks, disclaimer, and zero <img>`, async ({ page }) => {
+  test(`${path} has the shared landmarks, disclaimer, and only sanctioned images`, async ({
+    page,
+  }) => {
     await page.goto(path, { waitUntil: 'load' });
     await expectLandmarksAndCompliance(page);
   });
@@ -203,10 +205,14 @@ test('home page Golden Boot section renders a populated race or the honest empty
     '/stats/golden-boot',
   );
 
-  const rows = section.locator('ol li');
+  // W4: the empty state is now an aria-hidden em-dash SKELETON list plus the
+  // honest copy — so a populated race is specifically a NON-hidden <ol>.
+  const rows = section.locator('ol:not([aria-hidden="true"]) li');
   const rowCount = await rows.count();
   if (rowCount > 0) {
     expect(rowCount).toBeLessThanOrEqual(5);
+    // Deliberately NO flags in the Golden Boot table (nationality is a text
+    // attribute here, not a team identity — see GoldenBootRace.tsx).
     await expect(section.locator('img')).toHaveCount(0);
   } else {
     await expect(

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import LivePill from '@/components/LivePill';
+import TeamFlag from '@/components/TeamFlag';
 import { formatKickoff, scoreLine } from '@/lib/format';
 import type { FixtureStatus } from '@/lib/types';
 
@@ -99,7 +100,12 @@ export default function MatchHeader({
       </div>
 
       <h1 className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3 font-display text-xl font-semibold tracking-tight text-fg sm:text-2xl">
-        <TeamName name={home} slug={homeSlug} className="text-right" />
+        {/* Decorative national flags (aria-hidden) — the plain-text name stays
+            the identifier (§13; see components/TeamFlag.tsx). */}
+        <span className="flex flex-col items-end gap-1.5 text-right sm:flex-row sm:items-center sm:justify-end sm:gap-2.5">
+          <TeamFlag name={home} size="hero" />
+          <TeamName name={home} slug={homeSlug} className="text-right" />
+        </span>
         <span className="shrink-0 text-center" aria-hidden={!hasScore || undefined}>
           {hasScore ? (
             <span className="font-mono text-2xl font-medium sm:text-3xl">
@@ -109,7 +115,10 @@ export default function MatchHeader({
             <span className="text-sm font-normal text-fg-dim">v</span>
           )}
         </span>
-        <TeamName name={away} slug={awaySlug} className="text-left" />
+        <span className="flex flex-col items-start gap-1.5 text-left sm:flex-row sm:items-center sm:gap-2.5">
+          <TeamFlag name={away} size="hero" />
+          <TeamName name={away} slug={awaySlug} className="text-left" />
+        </span>
       </h1>
 
       <p className="mt-3 text-center text-xs text-fg-dim">

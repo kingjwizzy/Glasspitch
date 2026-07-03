@@ -19,7 +19,7 @@ const NAV = [
 export default function Header() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-bg/85 backdrop-blur-sm">
-      <div className="mx-auto flex w-full max-w-screen-md items-center gap-2 px-4 py-1.5">
+      <div className="mx-auto flex w-full max-w-screen-md items-center gap-2 px-4 py-1.5 lg:max-w-6xl">
         <Link
           href="/"
           className="inline-flex min-h-11 shrink-0 items-center font-display text-lg font-semibold tracking-tight text-fg"

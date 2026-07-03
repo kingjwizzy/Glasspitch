@@ -1,5 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
+import { test, expect } from '@playwright/test';
+import {
+  expectLandmarksAndCompliance,
+  expectNoDarkPatternVocabulary,
+  expectNoSeriousA11yViolations,
+  expectOnlySanctionedImages,
+} from './helpers';
 
 // Smoke + accessibility coverage for every page.
 //
@@ -21,27 +26,10 @@ const STATIC_PAGES = ['/', '/about', '/ledger', '/responsible-gambling'];
 const DYNAMIC_PAGES = ['/match/1', '/team/brazil', '/league/world-cup'];
 const ALL_PAGES = [...STATIC_PAGES, ...DYNAMIC_PAGES];
 
-/** Shared structural/compliance assertions every page must satisfy, regardless
- *  of data state (ARCHITECTURE.md §13; DESIGN.md §2). Assumes `page` has
- *  already navigated. */
-async function expectLandmarksAndCompliance(page: Page) {
-  const banner = page.locator('[role="region"][aria-label="Compliance disclaimer"]');
-  await expect(banner).toBeVisible();
-  await expect(banner).toContainText('not betting advice');
-  await expect(banner).toContainText('18+');
-
-  const footer = page.locator('footer');
-  await expect(footer).toContainText('not betting advice');
-
-  const primaryNav = page.locator('nav[aria-label="Primary"]');
-  await expect(primaryNav).toBeVisible();
-
-  await expect(page.locator('h1')).toHaveCount(1);
-
-  // No team crests, player photos, or any other <img> (ARCHITECTURE.md §13):
-  // plain-text team names only, on every page including the dynamic ones.
-  await expect(page.locator('img')).toHaveCount(0);
-}
+// The shared structural/compliance checklist (landmarks, disclaimer, single
+// h1, the §13 image rule — sanctioned /flags/ only since W4 — and the §6
+// no-dark-pattern vocabulary sweep) now lives in e2e/helpers.ts, shared with
+// the v2/v3 spec files instead of being duplicated here.
 
 // ── Home page structural invariants ─────────────────────────────────────────
 // These hold in any data state (populated / live / empty) because they come
@@ -67,13 +55,13 @@ test('/ has correct landmark structure and data-state-independent semantics', as
   const primaryNav = page.locator('nav[aria-label="Primary"]');
   await expect(primaryNav).toBeVisible();
 
-  // Heading order: h1 is present and unique; all labelled sections exist as h2.
+  // Heading order: h1 is present and unique (the W4 one-line kicker).
   await expect(page.locator('h1')).toHaveCount(1);
-  // The six named sections (hero, upcoming, watching, recent calls, the v3
-  // Golden Boot race, and the running record) each get a visible or sr-only
-  // h2 via SectionHeader or an inline element.
+  // The seven named sections of the W4 recomposition (hero band, matchday
+  // stream, watching, receipts, Golden Boot race, record band, sign-up
+  // end-cap) each get a visible or sr-only heading.
   const namedSections = page.locator('section[aria-labelledby]');
-  await expect(namedSections).toHaveCount(6);
+  await expect(namedSections).toHaveCount(7);
 
   // ProbabilityBar uses role=img with a descriptive aria-label naming all three
   // outcomes (DESIGN.md §2: colour is never the sole signal). With preview data
@@ -92,8 +80,19 @@ test('/ has correct landmark structure and data-state-independent semantics', as
     );
   }
 
-  // No team crests or photos (ARCHITECTURE.md §13): page must have zero <img> elements.
-  await expect(page.locator('img')).toHaveCount(0);
+  // No team crests or photos (ARCHITECTURE.md §13): since W4 the ONLY
+  // sanctioned images are the aria-hidden national flags under /flags/, each
+  // beside its plain-text team name. Preview data guarantees mapped nations,
+  // so at least one flag must actually render (the contract is exercised, not
+  // vacuously skipped).
+  await expectOnlySanctionedImages(page);
+  expect(
+    await page.locator('img[src^="/flags/"]').count(),
+    'populated home page should render at least one national flag',
+  ).toBeGreaterThan(0);
+
+  // No urgency/pressure copy anywhere on the page (DESIGN.md §6).
+  await expectNoDarkPatternVocabulary(page);
 });
 
 // ── Landmarks + compliance on every dynamic page + the populated ledger ─────
@@ -102,10 +101,13 @@ test('/ has correct landmark structure and data-state-independent semantics', as
 // pages other than '/' don't repeat this whole checklist — the home test above
 // already proves the shared layout carries it; this loop proves it ALSO holds
 // on routes rendered through a completely different code path (DB reads /
-// preview hatches), where a missing DisclaimerBanner or a stray <img> would
-// otherwise go uncaught.
+// preview hatches), where a missing DisclaimerBanner or an unsanctioned <img>
+// would otherwise go uncaught. (W4: /match/[id] and /team/[slug] now carry
+// aria-hidden national flags, so the image rule is "only /flags/", not zero.)
 for (const path of [...DYNAMIC_PAGES, '/ledger']) {
-  test(`${path} has landmarks, zero <img>, and the disclaimer`, async ({ page }) => {
+  test(`${path} has landmarks, only sanctioned images, and the disclaimer`, async ({
+    page,
+  }) => {
     await page.goto(path, { waitUntil: 'load' });
     await expectLandmarksAndCompliance(page);
   });
@@ -135,16 +137,9 @@ for (const path of ALL_PAGES) {
 
   test(`${path} has no serious or critical a11y violations`, async ({ page }) => {
     await page.goto(path, { waitUntil: 'load' });
-    const results = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .analyze();
-    const seriousOrWorse = results.violations.filter(
-      (v) => v.impact === 'serious' || v.impact === 'critical',
-    );
-    const report = seriousOrWorse
-      .map((v) => `- [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length} node(s))`)
-      .join('\n');
-    expect(seriousOrWorse, `a11y violations on ${path}:\n${report}`).toEqual([]);
+    // Shared helper: same tag set/severity floor as before, now audited at the
+    // settled (reduced-motion) presentation — see e2e/helpers.ts for why.
+    await expectNoSeriousA11yViolations(page);
   });
 }
 

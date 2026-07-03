@@ -27,6 +27,23 @@ name: Jobs scheduler
 #                                   LEAGUE, idempotent full-replace (upsert +
 #                                   prune) of that league's top-15 leaderboard
 #                                   (public data, not premium — migration 0005).
+#   score_user_predictions every 20m — v3 W5 (ARCHITECTURE.md §5, migration
+#                                   0006). Scores locked "Beat the Model" user
+#                                   picks (user_predictions) via the SAME
+#                                   scoring.brier_score as the ledger, and
+#                                   publishes fixture_pick_aggregates for any
+#                                   newly-locked fixture with picks. DB-only —
+#                                   makes NO football-API call. Piggybacks on
+#                                   score_results' own */20 * * * * schedule
+#                                   entry (its own job block + its own
+#                                   `if: failure()` alert, not a shared one).
+#   snapshot_probabilities daily 05:45 — v3 W5. Per-team Elo-derived win/draw/
+#                                   loss, clean-sheet, and expected-goals
+#                                   snapshots for upcoming fixtures + day-over-
+#                                   day deltas, into team_probability_
+#                                   snapshots. Public data (Gameweek Board /
+#                                   Fixture Ticker). DB-only — makes NO
+#                                   football-API call.
 #   keepalive          monthly    — pushes a heartbeat commit so the REPO never
 #                                   goes 60 days without activity, which is what
 #                                   triggers GitHub's automatic disabling of
@@ -49,9 +66,12 @@ name: Jobs scheduler
 #   lock_predictions  144 runs x 0 requests                  =  0 req/day
 #   score_results      72 runs x 0 requests                  =  0 req/day
 #   fetch_topscorers   1 run/day x 1 tracked league           =  1 req/day
+#   score_user_predictions 72 runs x 0 requests (DB-only)     =  0 req/day
+#   snapshot_probabilities  1 run/day x 0 requests (DB-only)  =  0 req/day
 #   keepalive           ~1 run/month x 0 requests            =  0 req/day
 #   Worst realistic day comfortably under 20 req; the per-run
-#   MAX_REQUESTS_PER_RUN guard caps any one run regardless.
+#   MAX_REQUESTS_PER_RUN guard caps any one run regardless. Neither new v3 W5
+#   job ever touches the request budget -- both are pure DB reads/writes.
 #
 # All writes are idempotent (upserts keyed on api_* ids; predictions fetched
 # once), so every job is safe to re-run and safe to overlap-skip (§5, §8).
@@ -78,6 +98,8 @@ on:
           - lock_predictions
           - score_results
           - fetch_topscorers
+          - score_user_predictions
+          - snapshot_probabilities
           - keepalive
       dry_run:
         description: 'Dry run — no DB writes. NOTE: fetch_* still call the football API (counts against the 100/day budget).'
@@ -98,7 +120,12 @@ on:
     - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
     - cron: '*/20 * * * *'   # score_results      — every 20 min
     - cron: '30 7 * * *'     # fetch_topscorers   — daily 07:30 UTC
+    - cron: '45 5 * * *'     # snapshot_probabilities — daily 05:45 UTC
     - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
+    # score_user_predictions has NO cron entry of its own -- it piggybacks on
+    # the EXISTING '*/20 * * * *' entry above (score_results' schedule), via
+    # its own `if:` guard below. Adding a second identical cron string would
+    # double-fire that time slot.
 
 # Least privilege: the jobs only read the checked-out repo and talk to Supabase /
 # the football API over the network. They never write back to the repo (the
@@ -348,6 +375,56 @@ jobs:
           This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
           fi
 
+  # ---- every 20m: score "Beat the Model" user picks (DB-only, no API) --------
+  # v3 W5 (ARCHITECTURE.md §5, migration 0006). Piggybacks on score_results'
+  # OWN '*/20 * * * *' schedule entry (shared cron string, separate job block +
+  # separate alert) -- see the header comment above.
+  score_user_predictions:
+    name: score_user_predictions (Beat the Model + crowd aggregates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: glasspitch-scheduler-score_user_predictions
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'score_user_predictions')) ||
+      github.event.schedule == '*/20 * * * *'
+    permissions:
+      contents: read
+      issues: write
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run score_user_predictions
+        run: python -m jobs.score_user_predictions ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: score_user_predictions
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
   # ---- daily: fetch top scorers (one /players/topscorers call per tracked league) --
   fetch_topscorers:
     name: fetch_topscorers (top-15 leaderboard per league)
@@ -381,6 +458,57 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_NAME: fetch_topscorers
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- daily 05:45: nightly Elo probability snapshots (DB-only, no API) ------
+  # v3 W5 (ARCHITECTURE.md §5, migration 0006) -- Gameweek Board / Fixture
+  # Ticker data. Scheduled BEFORE fetch_fixtures' first 6-hourly sweep of the
+  # day and fetch_predictions' 06:15 run so it snapshots off yesterday's fully
+  # -settled results, not a same-day fixtures update still in flight.
+  snapshot_probabilities:
+    name: snapshot_probabilities (Gameweek Board / Fixture Ticker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: glasspitch-scheduler-snapshot_probabilities
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'snapshot_probabilities')) ||
+      github.event.schedule == '45 5 * * *'
+    permissions:
+      contents: read
+      issues: write
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run snapshot_probabilities
+        run: python -m jobs.snapshot_probabilities ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: snapshot_probabilities
         run: |
           set -euo pipefail
           TITLE="[scheduler] ${JOB_NAME} failed"

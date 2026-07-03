@@ -6,7 +6,7 @@ import { DISCLAIMER, SITE_NAME } from '@/lib/constants';
 export default function Footer() {
   return (
     <footer className="mt-auto border-t border-line bg-surface">
-      <div className="mx-auto w-full max-w-screen-md px-4 py-7 text-sm">
+      <div className="mx-auto w-full max-w-screen-md px-4 py-7 text-sm lg:max-w-6xl">
         <p className="font-medium text-fg">{DISCLAIMER}</p>
         <nav aria-label="Footer" className="mt-2">
           {/* ≥44px tap targets (DESIGN.md §4); -mx offset keeps the row flush. */}

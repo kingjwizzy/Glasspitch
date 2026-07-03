@@ -520,6 +520,137 @@ class SupabaseStore:
             .order("rank")
         )
 
+    # ----- W5: "Beat the Model" user_predictions scoring + aggregates
+    # (ARCHITECTURE.md v3 §5, migration 0006) -- jobs/score_user_predictions.py.
+    # Football tables/the model's ledger stay jobs-only; these methods are the
+    # service-role side of the OWNER-scoped RLS writer path users get for
+    # their OWN picks only (never anyone else's, and never the ledger).
+    def locked_user_predictions_due_for_scoring(self) -> list[dict]:
+        """The self-draining set jobs/score_user_predictions.py scores:
+        user_predictions rows with no ``scored_at`` yet, whose fixture is
+        already FINISHED, each row carrying its fixture's finals embedded
+        under ``"fixture"`` -- same shape as
+        ``locked_predictions_due_for_scoring``, scoped to the OTHER table.
+        """
+        return self._paginated(
+            lambda: self._client.table("user_predictions")
+            .select(
+                "*, fixture:fixtures!inner(id, status, final_home_goals, final_away_goals)"
+            )
+            .is_("scored_at", "null")
+            .eq("fixture.status", "finished")
+        )
+
+    def write_user_prediction_score(
+        self,
+        prediction_id: str,
+        *,
+        result: str,
+        brier_score: float,
+        scored_at: Optional[str] = None,
+    ) -> None:
+        """Service-role-only write of one user_predictions row's scoring
+        fields. Migration 0006 backs this with TWO independent mechanisms:
+        `authenticated` has no column grant on result/brier_score/scored_at at
+        all, and the BEFORE INSERT/UPDATE trigger separately rejects any
+        non-service-role write that touches them -- this is the one writer
+        path both are built to allow.
+        """
+        self._client.table("user_predictions").update(
+            {
+                "result": result,
+                "brier_score": brier_score,
+                "scored_at": scored_at or util.now_utc().isoformat(),
+            }
+        ).eq("id", prediction_id).execute()
+
+    def locked_fixture_ids_with_user_picks(self) -> set[int]:
+        """Fixture ids that have at least one user_predictions row AND have
+        already locked (kickoff_utc <= now) -- the candidate pool for a
+        fixture_pick_aggregates refresh. A fixture with picks can never
+        change its pick set again once locked (the write-window trigger
+        forbids it), so once a candidate has an aggregate row it never needs
+        to be recomputed -- see ``existing_pick_aggregate_fixture_ids``.
+        """
+        now_iso = util.now_utc().isoformat()
+        rows = self._paginated(
+            lambda: self._client.table("user_predictions")
+            .select("fixture_id, fixture:fixtures!inner(id, kickoff_utc)")
+            .lte("fixture.kickoff_utc", now_iso)
+        )
+        return {row["fixture_id"] for row in rows}
+
+    def existing_pick_aggregate_fixture_ids(self) -> set[int]:
+        rows = self._paginated(
+            lambda: self._client.table("fixture_pick_aggregates").select("fixture_id")
+        )
+        return {row["fixture_id"] for row in rows}
+
+    def user_prediction_probs_for_fixture(self, fixture_id: int) -> list[dict]:
+        """Every user_predictions row's H/D/A probabilities for one fixture --
+        jobs/score_user_predictions.py averages these (via scoring.mean) into
+        one fixture_pick_aggregates row.
+        """
+        return self._paginated(
+            lambda: self._client.table("user_predictions")
+            .select("prob_home, prob_draw, prob_away")
+            .eq("fixture_id", fixture_id)
+        )
+
+    def upsert_fixture_pick_aggregate(
+        self,
+        *,
+        fixture_id: int,
+        n_picks: int,
+        avg_prob_home: Optional[float],
+        avg_prob_draw: Optional[float],
+        avg_prob_away: Optional[float],
+    ) -> None:
+        """Idempotent upsert keyed on the table's own ``fixture_id`` PK. Only
+        ever written once per fixture (see ``locked_fixture_ids_with_user_picks``'s
+        docstring for why re-running never needs to change an already-written
+        row), but upsert (not insert) keeps a re-run safe regardless.
+        """
+        self._client.table("fixture_pick_aggregates").upsert(
+            {
+                "fixture_id": fixture_id,
+                "n_picks": n_picks,
+                "avg_prob_home": avg_prob_home,
+                "avg_prob_draw": avg_prob_draw,
+                "avg_prob_away": avg_prob_away,
+            },
+            on_conflict="fixture_id",
+        ).execute()
+
+    # ----- W5: team_probability_snapshots (Gameweek Board / Fixture Ticker,
+    # migration 0006) -- jobs/snapshot_probabilities.py. PUBLIC data, same
+    # access class as top_scorers -- never the ledger, never gated.
+    def team_probability_snapshots_for_date(self, snapshot_date: str) -> list[dict]:
+        """All rows for one ``snapshot_date`` (a ``'YYYY-MM-DD'`` string) --
+        jobs/snapshot_probabilities.py fetches YESTERDAY's full set once per
+        run (a single bounded query) to compute day-over-day deltas, rather
+        than one query per team/fixture pair.
+        """
+        return self._paginated(
+            lambda: self._client.table("team_probability_snapshots")
+            .select("*")
+            .eq("snapshot_date", snapshot_date)
+        )
+
+    def upsert_team_probability_snapshots(self, rows: list[dict]) -> int:
+        """Idempotent bulk upsert keyed on the table's own
+        (snapshot_date, team_id, fixture_id) PK. A same-day re-run overwrites
+        with the same values; it can never double-apply a day-over-day delta,
+        because that delta is always computed against a FIXED prior date, not
+        against "whatever was already stored before this run".
+        """
+        if not rows:
+            return 0
+        self._client.table("team_probability_snapshots").upsert(
+            rows, on_conflict="snapshot_date,team_id,fixture_id"
+        ).execute()
+        return len(rows)
+
     def published_predictions_due(self, now_iso: str) -> list[dict]:
         return self._paginated(
             lambda: self._client.table("predictions")

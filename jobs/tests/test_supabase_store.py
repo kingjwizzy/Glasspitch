@@ -415,6 +415,169 @@ def test_top_scorers_for_league_returns_rows_ordered_by_rank(make_supabase_clien
     assert [r["player_name"] for r in rows] == ["First", "Second"]
 
 
+# --- W5 (migration 0006): user_predictions scoring, fixture_pick_aggregates
+# and team_probability_snapshots (jobs/score_user_predictions.py +
+# jobs/snapshot_probabilities.py). Runs the REAL SupabaseStore against
+# FakeSupabaseClient to exercise the actual update/upsert plumbing (composite
+# conflict targets included), mirroring the top_scorers section above. The
+# read paths that need PostgREST embedded-join filters
+# (locked_user_predictions_due_for_scoring / locked_fixture_ids_with_user_picks)
+# are covered at the job level via FakeStore instead -- same split as
+# locked_predictions_due_for_scoring.
+
+
+def test_write_user_prediction_score_updates_only_scoring_fields(make_supabase_client):
+    client = make_supabase_client(
+        user_predictions=[
+            {
+                "id": "up1", "user_id": "u1", "fixture_id": 300,
+                "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+                "result": None, "brier_score": None, "scored_at": None,
+            },
+            {
+                "id": "up2", "user_id": "u2", "fixture_id": 300,
+                "prob_home": 0.4, "prob_draw": 0.3, "prob_away": 0.3,
+                "result": None, "brier_score": None, "scored_at": None,
+            },
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    store.write_user_prediction_score(
+        "up1", result="home", brier_score=0.38, scored_at="2026-06-11T20:00:00+00:00"
+    )
+
+    rows = {r["id"]: r for r in client.tables["user_predictions"]}
+    assert rows["up1"]["result"] == "home"
+    assert rows["up1"]["brier_score"] == 0.38
+    assert rows["up1"]["scored_at"] == "2026-06-11T20:00:00+00:00"
+    # The pick itself is untouched -- scoring writes scoring fields ONLY.
+    assert rows["up1"]["prob_home"] == 0.5
+    # And only the addressed row is written.
+    assert rows["up2"]["result"] is None and rows["up2"]["scored_at"] is None
+
+
+def test_write_user_prediction_score_defaults_scored_at_to_now(make_supabase_client):
+    client = make_supabase_client(
+        user_predictions=[
+            {"id": "up1", "user_id": "u1", "fixture_id": 300, "scored_at": None},
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    store.write_user_prediction_score("up1", result="draw", brier_score=0.5)
+
+    assert client.tables["user_predictions"][0]["scored_at"] is not None
+
+
+def test_user_prediction_probs_for_fixture_filters_by_fixture(make_supabase_client):
+    client = make_supabase_client(
+        user_predictions=[
+            {"id": "up1", "fixture_id": 300, "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2},
+            {"id": "up2", "fixture_id": 300, "prob_home": 0.7, "prob_draw": 0.2, "prob_away": 0.1},
+            {"id": "up3", "fixture_id": 999, "prob_home": 0.1, "prob_draw": 0.1, "prob_away": 0.8},
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    rows = store.user_prediction_probs_for_fixture(300)
+
+    assert len(rows) == 2
+    assert sorted(r["prob_home"] for r in rows) == [0.5, 0.7]
+
+
+def test_existing_pick_aggregate_fixture_ids_returns_the_set(make_supabase_client):
+    client = make_supabase_client(
+        fixture_pick_aggregates=[
+            {"fixture_id": 300, "n_picks": 2},
+            {"fixture_id": 301, "n_picks": 5},
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    assert store.existing_pick_aggregate_fixture_ids() == {300, 301}
+
+
+def test_upsert_fixture_pick_aggregate_inserts_then_updates_in_place(make_supabase_client):
+    client = make_supabase_client(fixture_pick_aggregates=[])
+    store = SupabaseStore(client=client)
+
+    store.upsert_fixture_pick_aggregate(
+        fixture_id=300, n_picks=2,
+        avg_prob_home=0.5, avg_prob_draw=0.3, avg_prob_away=0.2,
+    )
+    store.upsert_fixture_pick_aggregate(  # a re-run: keyed on the fixture_id PK
+        fixture_id=300, n_picks=3,
+        avg_prob_home=0.6, avg_prob_draw=0.25, avg_prob_away=0.15,
+    )
+
+    rows = client.tables["fixture_pick_aggregates"]
+    assert len(rows) == 1  # updated in place, never duplicated
+    assert rows[0]["n_picks"] == 3
+    assert rows[0]["avg_prob_home"] == 0.6
+
+
+def test_team_probability_snapshots_for_date_filters_by_date(make_supabase_client):
+    client = make_supabase_client(
+        team_probability_snapshots=[
+            {"snapshot_date": "2026-06-10", "team_id": 200, "fixture_id": 300, "elo_rating": 1490},
+            {"snapshot_date": "2026-06-10", "team_id": 201, "fixture_id": 300, "elo_rating": 1510},
+            {"snapshot_date": "2026-06-09", "team_id": 200, "fixture_id": 300, "elo_rating": 1480},
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    rows = store.team_probability_snapshots_for_date("2026-06-10")
+
+    assert len(rows) == 2
+    assert {r["team_id"] for r in rows} == {200, 201}
+
+
+def test_upsert_team_probability_snapshots_bulk_upserts_on_the_composite_pk(
+    make_supabase_client,
+):
+    client = make_supabase_client(
+        team_probability_snapshots=[
+            {
+                "snapshot_date": "2026-06-11", "team_id": 200, "fixture_id": 300,
+                "elo_rating": 1490.0, "prob_win": 0.40,
+            },
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    written = store.upsert_team_probability_snapshots(
+        [
+            {  # collides with the seeded (date, team, fixture) -> update in place
+                "snapshot_date": "2026-06-11", "team_id": 200, "fixture_id": 300,
+                "elo_rating": 1500.0, "prob_win": 0.44,
+            },
+            {  # new key -> inserted
+                "snapshot_date": "2026-06-11", "team_id": 201, "fixture_id": 300,
+                "elo_rating": 1500.0, "prob_win": 0.31,
+            },
+        ]
+    )
+
+    assert written == 2
+    rows = client.tables["team_probability_snapshots"]
+    assert len(rows) == 2  # a same-day re-run never duplicates rows
+    by_team = {r["team_id"]: r for r in rows}
+    assert by_team[200]["elo_rating"] == 1500.0 and by_team[200]["prob_win"] == 0.44
+    assert by_team[201]["prob_win"] == 0.31
+
+
+def test_upsert_team_probability_snapshots_empty_rows_is_a_no_op(make_supabase_client):
+    client = make_supabase_client()
+    store = SupabaseStore(client=client)
+
+    assert store.upsert_team_probability_snapshots([]) == 0
+    # The store returned before ever touching the client: the fake only
+    # materialises a table key on first access, so its absence proves no
+    # query was issued at all.
+    assert "team_probability_snapshots" not in client.tables
+
+
 def test_record_job_run_captures_failure_shape(make_supabase_client):
     client = make_supabase_client()
     store = SupabaseStore(client=client)

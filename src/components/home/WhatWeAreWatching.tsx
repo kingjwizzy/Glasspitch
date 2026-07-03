@@ -1,9 +1,19 @@
 import Link from 'next/link';
-import { formatKickoff, templateRead } from '@/lib/format';
+import { pct, templateRead } from '@/lib/format';
 import type { FixtureView } from '@/lib/queries/homepage';
 
-// 1–3 featured matchups, each with a short plain-language read derived from the
-// numbers (DESIGN.md §4). Honest framing only — never "guaranteed" (§9, §13).
+// "What we're watching" (W4 spec §3) — 1–2 featured matchups, kept lean and
+// quiet so the promoted surfaces keep meaning: teams in Archivo, the one-line
+// hook derived honestly from the numbers (never "guaranteed" — §9, §13), the
+// probability trio in small mono with H/D/A letter chips, and a green
+// arrow-link. No thick bars here — display-scale data hierarchy lives in the
+// hero.
+
+const OUTCOMES = [
+  { key: 'home' as const, letter: 'H', chip: 'bg-home' },
+  { key: 'draw' as const, letter: 'D', chip: 'bg-draw' },
+  { key: 'away' as const, letter: 'A', chip: 'bg-away' },
+];
 
 function WatchCard({ f }: { f: FixtureView }) {
   const pred = f.prediction;
@@ -18,25 +28,39 @@ function WatchCard({ f }: { f: FixtureView }) {
         predicted_away_goals: pred.predicted_away_goals,
       })
     : null;
+  const probs = pred
+    ? { home: pred.prob_home, draw: pred.prob_draw, away: pred.prob_away }
+    : null;
 
   return (
-    <Link
-      href={`/match/${f.id}`}
-      className="block rounded-xl border border-line bg-surface p-4 transition-colors hover:border-fg/20 hover:bg-surface-2"
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <h3 className="font-display text-base font-semibold tracking-tight text-fg">
-          {f.home} <span className="font-sans font-normal text-fg-dim">v</span>{' '}
-          {f.away}
-        </h3>
-        <time
-          dateTime={f.kickoff_utc}
-          className="shrink-0 font-mono text-xs text-fg-dim"
+    <Link href={`/match/${f.id}`} className="glass card-interactive block p-4 lg:p-5">
+      <h3 className="font-display text-lg font-semibold tracking-tight text-fg">
+        {f.home} <span className="font-sans text-sm font-normal text-fg-dim">v</span>{' '}
+        {f.away}
+      </h3>
+      {read && <p className="mt-2 text-base leading-relaxed text-fg-dim">{read}</p>}
+      {probs && (
+        <p
+          className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5"
+          aria-label={`Win probability — home ${pct(probs.home)}, draw ${pct(probs.draw)}, away ${pct(probs.away)}`}
         >
-          {formatKickoff(f.kickoff_utc)}
-        </time>
-      </div>
-      {read && <p className="mt-2 text-sm leading-relaxed text-fg-dim">{read}</p>}
+          {OUTCOMES.map((o) => (
+            <span key={o.key} className="flex items-center gap-1.5" aria-hidden="true">
+              <span
+                className={`${o.chip} inline-flex h-4 w-4 items-center justify-center rounded-[3px] text-[10px] font-semibold text-bg`}
+              >
+                {o.letter}
+              </span>
+              <span className="font-mono text-base font-medium text-fg">
+                {pct(probs[o.key])}
+              </span>
+            </span>
+          ))}
+        </p>
+      )}
+      <p className="mt-3 text-sm font-medium text-green">
+        Read the full analysis &rarr;
+      </p>
     </Link>
   );
 }
@@ -48,15 +72,15 @@ export default function WhatWeAreWatching({
 }) {
   if (fixtures.length === 0) {
     return (
-      <p className="rounded-xl border border-line bg-surface px-4 py-6 text-sm text-fg-dim">
+      <p className="glass px-4 py-6 text-sm text-fg-dim">
         Nothing flagged yet — featured matchups appear here once predictions are
         in.
       </p>
     );
   }
   return (
-    <ul className="grid list-none gap-3 sm:grid-cols-2">
-      {fixtures.map((f) => (
+    <ul className="grid list-none gap-4 sm:grid-cols-2">
+      {fixtures.slice(0, 2).map((f) => (
         <li key={f.id}>
           <WatchCard f={f} />
         </li>

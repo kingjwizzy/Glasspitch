@@ -6,6 +6,7 @@ import SectionHeader from '@/components/SectionHeader';
 import FixtureList from '@/components/FixtureList';
 import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
+import TeamFlag from '@/components/TeamFlag';
 import { getTeamData, getAllTeamSlugs } from '@/lib/queries/team';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
@@ -104,7 +105,10 @@ export default async function TeamPage({ params }: TeamPageProps) {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+        <h1 className="flex items-center gap-2.5 font-display text-2xl font-semibold tracking-tight text-fg">
+          {/* Decorative national flag (aria-hidden) — plain-text name stays the
+              identifier (§13; see components/TeamFlag.tsx). */}
+          <TeamFlag name={name} size="hero" />
           {name}
         </h1>
         {league && leagueSlug && (

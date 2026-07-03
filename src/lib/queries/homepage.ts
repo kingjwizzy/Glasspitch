@@ -27,6 +27,8 @@ export interface PredictionView {
   predicted_away_goals: number;
   status: PredictionStatus;
   locked_at: string;
+  /** When the call went on the record — the hero's provenance microline. */
+  published_at: string;
 }
 
 export interface FixtureView {
@@ -58,20 +60,33 @@ export interface RecentCallView {
   final_away_goals: number | null;
   result: MatchResult | null;
   brier_score: number | null;
+  /** When the call went on the record — the receipts' provenance microline. */
+  published_at: string;
   /** The outcome we'd have picked (argmax of the probabilities). */
   pick: MatchResult;
   /** Whether that pick matched the actual result (the ✓/✗). */
   hit: boolean;
 }
 
+/** Headline record aggregates. Every figure is computed over the SAME bounded,
+ *  season-floored set of scored rows, so the mean and the sample size it
+ *  claims can never diverge (§10). */
 export interface RecordView {
   meanBrier: number | null;
+  meanLogLoss: number | null;
   count: number;
+  /** How many of those scored calls saw the most-likely outcome land. */
+  hits: number;
 }
 
 export interface HomepageData {
   hero: FixtureView | null;
+  /** Every in-play fixture (the hero may be live[0]). */
+  live: FixtureView[];
   upcoming: FixtureView[];
+  /** Fixtures finished earlier today (UTC) — the "also today" count and the
+   *  matchday stream's finished rows. */
+  finishedToday: FixtureView[];
   watching: FixtureView[];
   recentCalls: RecentCallView[];
   record: RecordView;
@@ -79,10 +94,12 @@ export interface HomepageData {
 
 const EMPTY: HomepageData = {
   hero: null,
+  live: [],
   upcoming: [],
+  finishedToday: [],
   watching: [],
   recentCalls: [],
-  record: { meanBrier: null, count: 0 },
+  record: { meanBrier: null, meanLogLoss: null, count: 0, hits: 0 },
 };
 
 // ── raw row shapes (PostgREST returns to-one embeds as objects at runtime; the
@@ -104,6 +121,7 @@ interface RawPrediction {
   predicted_away_goals: number;
   status: string;
   locked_at: string;
+  published_at: string;
   source: string;
 }
 interface RawFixture {
@@ -124,6 +142,7 @@ interface RawScored {
   prob_away: number;
   result: string | null;
   brier_score: number | null;
+  published_at: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
   fixture: RawScoredFixture | RawScoredFixture[] | null;
@@ -147,11 +166,11 @@ const FIXTURE_SELECT = `
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
   league:leagues!fixtures_league_id_fkey!inner(name, season),
-  predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals, status, locked_at, source)
+  predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals, status, locked_at, published_at, source)
 `;
 
 const SCORED_SELECT = `
-  id, prob_home, prob_draw, prob_away, result, brier_score, final_home_goals, final_away_goals,
+  id, prob_home, prob_draw, prob_away, result, brier_score, published_at, final_home_goals, final_away_goals,
   fixture:fixtures!predictions_fixture_id_fkey!inner(
     id,
     home_team:teams!fixtures_home_team_id_fkey(name),
@@ -193,6 +212,7 @@ function mapFixture(r: RawFixture): FixtureView {
           predicted_away_goals: pred.predicted_away_goals,
           status: pred.status as PredictionStatus,
           locked_at: pred.locked_at,
+          published_at: pred.published_at,
         }
       : null,
   };
@@ -219,6 +239,7 @@ function mapScored(r: RawScored): RecentCallView {
     final_away_goals: r.final_away_goals,
     result,
     brier_score: r.brier_score,
+    published_at: r.published_at,
     pick,
     hit: result !== null && pick === result,
   };
@@ -226,9 +247,13 @@ function mapScored(r: RawScored): RecentCallView {
 
 async function load(): Promise<HomepageData> {
   const sb = getSupabaseClient();
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  // Start of the current UTC day — the "finished today" window (the matchday
+  // stream's full-time rows and the "also today" counts).
+  const startOfTodayIso = `${nowIso.slice(0, 10)}T00:00:00.000Z`;
 
-  const [liveRes, upcomingRes, scoredRes, recordRes] = await Promise.all([
+  const [liveRes, upcomingRes, finishedTodayRes, scoredRes, recordRes] = await Promise.all([
     sb
       .from('fixtures')
       .select(FIXTURE_SELECT)
@@ -245,25 +270,33 @@ async function load(): Promise<HomepageData> {
       .order('kickoff_utc', { ascending: true })
       .limit(8),
     sb
+      .from('fixtures')
+      .select(FIXTURE_SELECT)
+      .eq('status', 'finished')
+      .gte('kickoff_utc', startOfTodayIso)
+      .gte('league.season', MIN_SEASON)
+      .order('kickoff_utc', { ascending: true })
+      .limit(12),
+    sb
       .from('predictions')
       .select(SCORED_SELECT)
       .eq('source', DISPLAY_SOURCE)
       .eq('status', 'scored')
       .gte('fixture.league.season', MIN_SEASON)
       .order('scored_at', { ascending: false })
-      .limit(5),
-    // No DB aggregate view exists yet (§7) — fetch the scored Brier column and
-    // reduce. Ordered + bounded so the mean and the sample count come from the
-    // SAME set: an unbounded select is silently row-capped by PostgREST, which
-    // would diverge the mean from an exact count. For v1's single tournament
-    // this window is the full record; /ledger is the all-time authority and a
-    // SQL aggregate RPC is the scale path once the ledger outgrows the window.
-    // The fixture/league embed exists ONLY to apply the §5 season guard —
-    // its columns are never read.
+      .limit(10),
+    // No DB aggregate view exists yet (§7) — fetch the scored rows and reduce.
+    // Ordered + bounded so every aggregate (mean Brier, mean log loss, hit
+    // count) comes from the SAME set: an unbounded select is silently
+    // row-capped by PostgREST, which would diverge the means from an exact
+    // count. For v1's single tournament this window is the full record;
+    // /ledger is the all-time authority and a SQL aggregate RPC is the scale
+    // path once the ledger outgrows the window. The fixture/league embed
+    // exists ONLY to apply the §5 season guard — its columns are never read.
     sb
       .from('predictions')
       .select(
-        'brier_score, fixture:fixtures!predictions_fixture_id_fkey!inner(league:leagues!fixtures_league_id_fkey!inner(season))',
+        'brier_score, log_loss, prob_home, prob_draw, prob_away, result, fixture:fixtures!predictions_fixture_id_fkey!inner(league:leagues!fixtures_league_id_fkey!inner(season))',
       )
       .eq('source', DISPLAY_SOURCE)
       .eq('status', 'scored')
@@ -278,7 +311,7 @@ async function load(): Promise<HomepageData> {
   // revalidation keeps serving the last good cached page and retries, instead
   // of silently replacing the homepage's live/record surfaces with a false
   // empty state.
-  for (const res of [liveRes, upcomingRes, scoredRes, recordRes]) {
+  for (const res of [liveRes, upcomingRes, finishedTodayRes, scoredRes, recordRes]) {
     if (res.error) {
       throw new Error(`homepage read failed: ${res.error.message}`);
     }
@@ -286,6 +319,7 @@ async function load(): Promise<HomepageData> {
 
   const live = ((liveRes.data as RawFixture[] | null) ?? []).map(mapFixture);
   const upcomingAll = ((upcomingRes.data as RawFixture[] | null) ?? []).map(mapFixture);
+  const finishedToday = ((finishedTodayRes.data as RawFixture[] | null) ?? []).map(mapFixture);
   const recentCalls = ((scoredRes.data as RawScored[] | null) ?? []).map(mapScored);
 
   const hero = live[0] ?? upcomingAll[0] ?? null;
@@ -307,16 +341,47 @@ async function load(): Promise<HomepageData> {
     .slice(0, 3)
     .map((x) => x.f);
 
-  const brierRows = (recordRes.data as Array<{ brier_score: number | null }> | null) ?? [];
-  const briers = brierRows
-    .map((r) => r.brier_score)
-    .filter((b): b is number => typeof b === 'number');
-  // Count is the size of the set we actually averaged, so the headline mean and
-  // the sample size it claims can never diverge.
-  const count = briers.length;
-  const meanBrier = count > 0 ? briers.reduce((s, b) => s + b, 0) / count : null;
+  interface RecordRow {
+    brier_score: number | null;
+    log_loss: number | null;
+    prob_home: number;
+    prob_draw: number;
+    prob_away: number;
+    result: string | null;
+  }
+  // One identical set for every headline figure: scored rows with a Brier
+  // score (the query's .not-null filter). Count, hits, mean Brier and mean log
+  // loss are all reduced from it, so no figure can claim a different sample.
+  const recordRows = ((recordRes.data as unknown as RecordRow[] | null) ?? []).filter(
+    (r): r is RecordRow & { brier_score: number } => typeof r.brier_score === 'number',
+  );
+  const count = recordRows.length;
+  const meanBrier =
+    count > 0 ? recordRows.reduce((s, r) => s + r.brier_score, 0) / count : null;
+  const logLosses = recordRows
+    .map((r) => r.log_loss)
+    .filter((l): l is number => typeof l === 'number');
+  const meanLogLoss =
+    logLosses.length > 0
+      ? logLosses.reduce((s, l) => s + l, 0) / logLosses.length
+      : null;
+  // "Most-likely outcome landed X of Y" — argmax pick vs recorded result.
+  const hits = recordRows.filter(
+    (r) =>
+      r.result !== null &&
+      favoured({ home: r.prob_home, draw: r.prob_draw, away: r.prob_away }).key ===
+        (r.result as MatchResult),
+  ).length;
 
-  return { hero, upcoming, watching, recentCalls, record: { meanBrier, count } };
+  return {
+    hero,
+    live,
+    upcoming,
+    finishedToday,
+    watching,
+    recentCalls,
+    record: { meanBrier, meanLogLoss, count, hits },
+  };
 }
 
 /**

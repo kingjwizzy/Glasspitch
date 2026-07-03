@@ -1,38 +1,78 @@
 import type { TopScorerView } from '@/lib/queries/goldenBoot';
 
-// Golden Boot race — home item 5 (DESIGN.md §4): top scorers, name · nation ·
-// goals, text and numbers only (no photos/crests — ARCHITECTURE.md §13). Mono
-// figures for the goal counts (DESIGN.md §3 "we take our numbers seriously").
-// Honest empty state (DESIGN.md §9) while the data pipeline hasn't run yet.
+// Golden Boot race — home item 5 (DESIGN.md §4), W4 slot contract: a .glass
+// card with ~320px reserved height (zero CLS while data arrives), a
+// hairline-ruled table — rank gutter · name · nation · right-aligned mono
+// goals — whose dense aligned-numbers texture is deliberately part of the
+// instrument-panel register. Text and numbers only: no photos, crests, or
+// flags here (ARCHITECTURE.md §13; the W4 flag sanction covers team-name
+// surfaces, and nationality here is a text attribute, not a team identity).
+// Ties are shown honestly ("=3"); the empty state is the same table skeleton
+// with em-dashes — never a spinner.
 
 export default function GoldenBootRace({ scorers }: { scorers: TopScorerView[] }) {
   if (scorers.length === 0) {
     return (
-      <p className="rounded-xl border border-line bg-surface px-4 py-6 text-sm text-fg-dim">
-        Top-scorer standings appear once the data pipeline first runs.
-      </p>
+      <div className="glass min-h-80 px-4 py-2">
+        <ol aria-hidden="true" className="divide-y divide-line">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <li key={i} className="flex items-center gap-3 py-3.5">
+              <span className="w-6 shrink-0 font-mono text-sm text-fg-faint">—</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-fg-dim">—</p>
+                <p className="text-xs text-fg-faint">—</p>
+              </div>
+              <span className="shrink-0 font-mono text-sm text-fg-dim">—</span>
+            </li>
+          ))}
+        </ol>
+        <p className="py-3 text-sm text-fg-dim">
+          Top-scorer standings appear once the data pipeline first runs.
+        </p>
+      </div>
     );
   }
 
+  // A rank shared by more than one player renders as "=N" on every tied row.
+  const rankCounts = new Map<number, number>();
+  for (const s of scorers) rankCounts.set(s.rank, (rankCounts.get(s.rank) ?? 0) + 1);
+
   return (
-    <ol className="divide-y divide-line rounded-xl border border-line bg-surface px-4">
-      {scorers.map((s) => (
-        <li key={`${s.rank}-${s.playerName}`} className="flex items-center gap-3 py-3">
-          <span className="w-5 shrink-0 font-mono text-sm text-fg-dim" aria-hidden="true">
-            {s.rank}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-fg">{s.playerName}</p>
-            <p className="truncate text-xs text-fg-dim">{s.nationality ?? '—'}</p>
-          </div>
-          <span className="shrink-0 font-mono text-sm font-medium text-fg">
-            {s.goals}
-            <span className="ml-1 text-xs font-normal text-fg-dim">
-              {s.goals === 1 ? 'goal' : 'goals'}
-            </span>
-          </span>
-        </li>
-      ))}
-    </ol>
+    <div className="glass min-h-80 px-4 py-1">
+      <ol className="divide-y divide-line">
+        {scorers.map((s) => {
+          const tied = (rankCounts.get(s.rank) ?? 0) > 1;
+          const top = s.rank === 1;
+          return (
+            <li key={`${s.rank}-${s.playerName}`} className="flex items-center gap-3 py-3">
+              {/* Rank is inferable from order + goals — a hint, so faint + hidden
+                  from the tree (fg-faint is reserved for non-essential text). */}
+              <span
+                className="w-6 shrink-0 font-mono text-sm text-fg-faint"
+                aria-hidden="true"
+              >
+                {tied ? `=${s.rank}` : s.rank}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p
+                  className={`truncate text-base text-fg ${top ? 'font-medium' : ''}`}
+                >
+                  {s.playerName}
+                </p>
+                <p className="truncate text-[13px] text-fg-dim">
+                  {s.nationality || '—'}
+                </p>
+              </div>
+              <span className="shrink-0 font-mono text-base font-medium text-fg">
+                {s.goals}
+                <span className="ml-1 text-xs font-normal text-fg-dim">
+                  {s.goals === 1 ? 'goal' : 'goals'}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }

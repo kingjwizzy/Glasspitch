@@ -4,6 +4,19 @@
 // red↔green pair). And colour is NEVER the only signal — every outcome shows its
 // letter (H/D/A) and its % as well, so the bar parses in greyscale (§2 hard rule).
 // Inputs are probabilities in [0, 1] that sum to ~1.0 (the §7 CHECK guarantees it).
+//
+// W4 size variants:
+//  - `legend` (default) — 10px bar + full H/D/A legend (match page surfaces).
+//  - `hero`   — 12px bar only; the display-scale probability trio rendered
+//               directly above it by FeaturedMatch carries the printed labels,
+//               and the bar keeps the full accessible label.
+//  - `row`    — 6px bar + an 11px mono "H 54 · D 26 · A 20" line, labels always
+//               printed (fixture rows / receipts).
+//  - `compact`— legacy boolean: bar only (kept for existing callers).
+
+import { pct, pctFigure } from '@/lib/format';
+
+export type ProbabilityBarVariant = 'legend' | 'hero' | 'row';
 
 export interface ProbabilityBarProps {
   home: number;
@@ -12,10 +25,7 @@ export interface ProbabilityBarProps {
   className?: string;
   /** Bar only, no per-outcome legend (for dense rows). */
   compact?: boolean;
-}
-
-function pct(value: number): string {
-  return `${Math.round(value * 100)}%`;
+  variant?: ProbabilityBarVariant;
 }
 
 const SEGMENTS = [
@@ -24,12 +34,19 @@ const SEGMENTS = [
   { key: 'away', letter: 'A', label: 'Away', bar: 'bg-away', chip: 'bg-away' },
 ] as const;
 
+const BAR_HEIGHT: Record<ProbabilityBarVariant, string> = {
+  legend: 'h-2.5',
+  hero: 'h-3',
+  row: 'h-1.5',
+};
+
 export default function ProbabilityBar({
   home,
   draw,
   away,
   className,
   compact = false,
+  variant = 'legend',
 }: ProbabilityBarProps) {
   const values: Record<(typeof SEGMENTS)[number]['key'], number> = {
     home,
@@ -43,7 +60,7 @@ export default function ProbabilityBar({
   return (
     <div className={className}>
       <div
-        className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full"
+        className={`flex ${BAR_HEIGHT[variant]} w-full gap-0.5 overflow-hidden rounded-full`}
         role="img"
         aria-label={`Win probability — ${label}`}
       >
@@ -62,7 +79,18 @@ export default function ProbabilityBar({
         ))}
       </div>
 
-      {!compact && (
+      {/* Row variant: labels always printed as one aligned mono line. Duplicate
+          of the bar's accessible label, so hidden from the tree. */}
+      {variant === 'row' && (
+        <p
+          aria-hidden="true"
+          className="mt-1 font-mono text-[11px] leading-4 text-fg-dim"
+        >
+          H {pctFigure(home)} · D {pctFigure(draw)} · A {pctFigure(away)}
+        </p>
+      )}
+
+      {variant === 'legend' && !compact && (
         <dl className="mt-2.5 grid grid-cols-3 gap-2 text-center">
           {SEGMENTS.map((s) => (
             <div key={s.key} className="flex flex-col items-center gap-1">

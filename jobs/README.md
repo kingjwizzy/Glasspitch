@@ -20,13 +20,15 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `db.py` | Supabase **secret-key** client + `SupabaseStore` (idempotent upserts keyed on `api_*` ids; the only writer; every list read is paginated past PostgREST's 1000-row cap). |
 | `util.py` | `slugify`, UTC datetime helpers. |
 | `scoring.py` | Multiclass Brier score + clipped log loss (§10). |
-| `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9). |
+| `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9); v3 W5 adds `expected_goals`/`clean_sheet_probability`/`team_snapshot_metrics` (Poisson clean-sheet + continuous expected-goals estimates for `snapshot_probabilities.py`). |
 | `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). |
 | `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. |
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
 | `score_results.py` | **Frequent around match end.** Scores the self-draining `locked` set via `scoring.py` (§8.4, §10). |
 | `fetch_insights.py` | **v2, new (suggested cadence: every 30–60 min).** One `/fixtures/statistics` fetch per finished+scored fixture without a `post_match_stats` insight yet (most-recently-finished first); curates xG/shots/possession/cards/passes per side into `fixture_insights` (migration 0004). Premium depth content — never the free ledger. |
 | `fetch_topscorers.py` | **New (daily, e.g. 07:30 UTC).** One `/players/topscorers` fetch per tracked league; top 15 by rank, idempotent full-replace into `top_scorers` (migration 0005). **Public** data — same access class as `leagues`/`teams`/`fixtures`, not premium. |
+| `score_user_predictions.py` | **v3 W5, new (every ~20 min).** DB-only, no API call. Scores locked "Beat the Model" user picks (`user_predictions`) via the same `scoring.brier_score` as the ledger, service-role-only; also publishes `fixture_pick_aggregates` (crowd-vs-model, no PII) for any newly-locked fixture with picks (migration 0006, ARCHITECTURE.md v3 §5). |
+| `snapshot_probabilities.py` | **v3 W5, new (nightly, e.g. 05:45 UTC).** DB-only, no API call. Per-team Elo-derived win/draw/loss, clean-sheet, and expected-goals snapshots for upcoming fixtures + day-over-day deltas, into `team_probability_snapshots` (migration 0006). **Public** data — powers the free Gameweek Board / Fixture Ticker, same access class as `top_scorers`. |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
 
@@ -95,6 +97,30 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   rows is safe. Isolated per league like `fetch_fixtures` (one bad league
   logs + continues; `RequestBudgetExceeded` ends the run early and
   gracefully).
+- **`score_user_predictions`** (v3 W5) — DB-only, no API call. Pass 1: scores
+  every `user_predictions` row with no `scored_at` yet whose fixture is
+  already `finished` (a small, self-draining set, same shape as
+  `score_results`' own query against the ledger), via the identical
+  `scoring.brier_score` machinery — never a second scoring formula for the
+  game. One malformed row is logged and skipped, never aborts the run for
+  everyone else's picks. Pass 2: for any fixture that has locked (kickoff
+  passed) with at least one pick but no `fixture_pick_aggregates` row yet,
+  averages that fixture's picks into one aggregate row (`n_picks` +
+  `avg_prob_home`/`draw`/`away`) — mirrors `user_predictions`' own
+  anti-copying rule (never published pre-kickoff); once written, a fixture's
+  aggregate never needs recomputing, since its pick set is frozen the moment
+  it locks (migration 0006's write-window trigger).
+- **`snapshot_probabilities`** (v3 W5, nightly) — DB-only, no API call. For
+  every fixture kicking off within `config.SNAPSHOT_FIXTURE_WINDOW_HOURS`
+  (default 14 days): replays Elo ratings from finished results (same method
+  as `fetch_predictions`), computes `elo.team_snapshot_metrics()`
+  (win/draw/loss, clean-sheet, continuous expected goals) for both sides, and
+  writes two rows per fixture into `team_probability_snapshots`, keyed on
+  `(snapshot_date, team_id, fixture_id)` — idempotent, safe to re-run same-day.
+  Day-over-day deltas (`delta_elo_rating`, `delta_prob_win`) are computed once
+  per run against a single bulk read of yesterday's snapshot set. Public data,
+  same access class as `top_scorers` — powers the free Gameweek Board /
+  Fixture Ticker.
 
 ## `--dry-run`
 
@@ -133,6 +159,8 @@ python -m jobs.lock_predictions --dry-run
 python -m jobs.score_results --dry-run
 python -m jobs.fetch_insights --dry-run
 python -m jobs.fetch_topscorers --dry-run
+python -m jobs.score_user_predictions --dry-run   # DB-only — no API call either way
+python -m jobs.snapshot_probabilities --dry-run    # DB-only — no API call either way
 
 # for real (writes to the DB)
 python -m jobs.fetch_fixtures        # daily
@@ -141,6 +169,8 @@ python -m jobs.lock_predictions      # every ~10-15 min
 python -m jobs.score_results         # frequently around match end
 python -m jobs.fetch_insights        # v2 — every ~30-60 min (suggested; not yet in scheduler.yml)
 python -m jobs.fetch_topscorers      # daily (scheduler.yml: 07:30 UTC)
+python -m jobs.score_user_predictions # v3 W5 — every ~20 min (scheduler.yml)
+python -m jobs.snapshot_probabilities # v3 W5 — nightly (scheduler.yml: 05:45 UTC)
 ```
 
 Add `-v` for debug logging. Writes are idempotent (keyed on the `api_*` ids), so

@@ -8,6 +8,11 @@ import 'server-only';
 // realistic content when there is no seeded local database. Team names are
 // plain text only, no crests/marks (ARCHITECTURE.md §13). The numbers are
 // illustrative, not real predictions.
+//
+// Kickoffs are generated RELATIVE to render time (rounded to the hour) so the
+// W4 matchday-stream surfaces — "Today — …" day groups, the "also today"
+// counts, kickoff-relative hero phrasing, finished-today rows — all render
+// populated for e2e at any wall-clock time.
 
 import type {
   FixtureView,
@@ -20,6 +25,14 @@ import { predictedPick } from '@/lib/format';
 export type PreviewVariant = 'default' | 'live';
 
 let seq = 1;
+
+/** ISO timestamp `hours` from now, rounded down to the hour (stable phrasing). */
+function at(hours: number): string {
+  const t = new Date();
+  t.setUTCMinutes(0, 0, 0);
+  t.setUTCHours(t.getUTCHours() + hours);
+  return t.toISOString();
+}
 
 function fixture(
   home: string,
@@ -51,6 +64,8 @@ function fixture(
       predicted_away_goals: predicted[1],
       status: predStatus,
       locked_at: kickoff,
+      // Published well before kickoff — the provenance microline's claim.
+      published_at: at(-30),
     },
   };
 }
@@ -77,6 +92,7 @@ function scored(
     final_away_goals: final[1],
     result,
     brier_score: brier,
+    published_at: at(-52),
     pick,
     hit: result !== null && pick === result,
   };
@@ -86,16 +102,44 @@ export function previewHomepageData(variant: PreviewVariant): HomepageData {
   seq = 1;
 
   const upcoming: FixtureView[] = [
-    fixture('Argentina', 'Croatia', '2026-06-26T16:00:00+00:00', [0.55, 0.24, 0.21], [2, 0]),
-    fixture('France', 'Morocco', '2026-06-26T19:00:00+00:00', [0.5, 0.26, 0.24], [2, 1]),
-    fixture('England', 'Netherlands', '2026-06-27T16:00:00+00:00', [0.38, 0.3, 0.32], [1, 1]),
-    fixture('Portugal', 'Uruguay', '2026-06-27T19:00:00+00:00', [0.46, 0.27, 0.27], [2, 1]),
-    fixture('Germany', 'Japan', '2026-06-28T16:00:00+00:00', [0.41, 0.29, 0.3], [1, 1]),
-    fixture('Belgium', 'United States', '2026-06-28T19:00:00+00:00', [0.48, 0.26, 0.26], [2, 1]),
+    // Later today (relative to render) …
+    fixture('Argentina', 'Croatia', at(6), [0.55, 0.24, 0.21], [2, 0]),
+    fixture('France', 'Morocco', at(9), [0.5, 0.26, 0.24], [2, 1]),
+    // … tomorrow …
+    fixture('England', 'Netherlands', at(27), [0.38, 0.3, 0.32], [1, 1]),
+    fixture('Portugal', 'Uruguay', at(30), [0.46, 0.27, 0.27], [2, 1]),
+    // … and the day after.
+    fixture('Germany', 'Japan', at(51), [0.41, 0.29, 0.3], [1, 1]),
+    fixture('Belgium', 'USA', at(54), [0.48, 0.26, 0.26], [2, 1]),
+  ];
+
+  // Finished earlier today — the matchday stream's full-time rows and the
+  // "also today" count. Scored, so the rows carry their ✓/✗ honestly.
+  const finishedToday: FixtureView[] = [
+    fixture(
+      'Spain',
+      'Switzerland',
+      at(-7),
+      [0.62, 0.23, 0.15],
+      [2, 0],
+      'finished',
+      'scored',
+      [2, 0],
+    ),
+    fixture(
+      'Croatia',
+      'Japan',
+      at(-4),
+      [0.5, 0.27, 0.23],
+      [1, 2],
+      'finished',
+      'scored',
+      [1, 2],
+    ),
   ];
 
   // Tightest calls first (smallest top-two gap) — the most interesting reads.
-  const watching = [upcoming[2], upcoming[4], upcoming[3]];
+  const watching = [upcoming[2], upcoming[4]];
 
   const recentCalls: RecentCallView[] = [
     scored('Netherlands', 'Mexico', [0.57, 0.24, 0.19], [3, 1], 'home', 0.33),
@@ -105,6 +149,7 @@ export function previewHomepageData(variant: PreviewVariant): HomepageData {
     // A second miss — a predicted home win that finished level.
     scored('Uruguay', 'Ghana', [0.48, 0.28, 0.24], [1, 1], 'draw', 0.71),
     scored('France', 'Poland', [0.66, 0.21, 0.13], [3, 0], 'home', 0.19),
+    scored('Brazil', 'Senegal', [0.58, 0.24, 0.18], [2, 1], 'home', 0.31),
   ];
 
   const hero =
@@ -112,20 +157,28 @@ export function previewHomepageData(variant: PreviewVariant): HomepageData {
       ? fixture(
           'Argentina',
           'France',
-          '2026-06-25T18:00:00+00:00',
+          at(-1),
           [0.49, 0.27, 0.24],
           [2, 1],
           'live',
           'locked',
           [1, 1],
         )
-      : fixture('Brazil', 'Spain', '2026-06-25T19:00:00+00:00', [0.44, 0.28, 0.28], [2, 1]);
+      : fixture('Brazil', 'Spain', at(3), [0.44, 0.28, 0.28], [2, 1]);
+
+  const live = variant === 'live' ? [hero] : [];
+
+  const hits = recentCalls.filter((c) => c.hit).length;
 
   return {
     hero,
+    live,
     upcoming,
+    finishedToday,
     watching,
     recentCalls,
-    record: { meanBrier: 0.57, count: 37 },
+    // Aggregates consistent with a young, honest record (illustrative numbers):
+    // count matches the itemised receipts window it claims to summarise.
+    record: { meanBrier: 0.44, meanLogLoss: 0.98, count: recentCalls.length, hits },
   };
 }

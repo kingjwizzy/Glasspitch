@@ -7,6 +7,17 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = Number(process.env.PORT ?? 3000);
 const baseURL = `http://localhost:${PORT}`;
 
+// W4: the homepage's data state is baked in at BUILD time (fully static/ISR,
+// revalidate 600), so one server can only ever show ONE state. The main
+// webServer below renders the POPULATED preview homepage; this second port
+// serves a separate throwaway build (e2e/empty-home-server.mjs) whose homepage
+// renders the honest structural EMPTY state (PREVIEW_HOMEPAGE=empty — ghost
+// chips, the lock→whistle→scored pipeline, "record opens after the first
+// final whistle" copy), asserted by e2e/home-empty.spec.ts. Set
+// E2E_SKIP_EMPTY=1 to skip that server + its specs on a quick targeted run.
+const EMPTY_HOME_PORT = Number(process.env.EMPTY_HOME_PORT ?? 3001);
+const includeEmptyHomeServer = process.env.E2E_SKIP_EMPTY !== '1';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -27,56 +38,73 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 5'] } },
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
   ],
-  webServer: {
-    command: 'npm run build && npm run start',
-    url: baseURL,
-    timeout: 120_000,
-    // Locally, reuse a server already on :3000; in CI always start fresh.
-    reuseExistingServer: !process.env.CI,
-    // Render every DB-backed route with representative preview data (server-only
-    // hatches, write NOTHING — see src/lib/queries/*.preview.ts) so the e2e
-    // a11y/landmark specs exercise populated content — the hero + ProbabilityBars,
-    // a scored/locked/voided match, a team, a league, and the ledger's calibration
-    // table + scored rows — not only empty states. ALLOW_PREVIEW=1 is the second,
-    // explicit flag every PREVIEW_* hatch requires together (src/lib/queries/shared.ts
-    // previewAllowed()) — a single stray PREVIEW_* var alone does nothing, which is
-    // exactly why it must be set here for any of them to fire in this production
-    // build. Merged over process.env (CI provides the dummy NEXT_PUBLIC_* there;
-    // locally `next` reads them from .env.local).
-    env: {
-      ALLOW_PREVIEW: '1',
-      PREVIEW_HOMEPAGE: '1',
-      PREVIEW_LEDGER: '1',
-      PREVIEW_MATCH: '1',
-      PREVIEW_TEAM: '1',
-      PREVIEW_LEAGUE: '1',
-      // v3 "full site" round: /matches (src/lib/queries/matches.ts) gets the
-      // same deterministic-preview treatment as the other primary DB-backed
-      // surfaces above, so its day-grouping/probability-bar assertions
-      // (e2e/full-site.spec.ts) don't depend on whatever the live tournament
-      // schedule happens to be on the day the suite runs. /leagues and
-      // /stats/golden-boot deliberately have NO preview hatch of their own
-      // (they degrade to an honest empty state on any backing-store
-      // condition), so they run against whichever real Supabase project this
-      // build's .env.local points at.
-      PREVIEW_MATCHES: '1',
-      // v2 premium (e2e/premium.spec.ts): fake-but-well-formed test-mode
-      // values so /premium renders its REAL £4/£29 Checkout buttons instead
-      // of the "not switched on yet" fallback (src/lib/stripe/plans.ts's
-      // plansConfigured() needs both price ids; the page's canCheckout also
-      // needs a truthy STRIPE_SECRET_KEY). These are never used to make a
-      // real Stripe API call in this suite — getStripe() only constructs the
-      // SDK client (no network call at construction time), and every e2e
-      // request that would actually reach Stripe (checkout/portal) is
-      // anonymous and redirects to /login first. Deliberately NOT setting
-      // STRIPE_WEBHOOK_SECRET here: leaving it unset exercises the webhook
-      // route's genuine pre-launch 503-degradation path (see
-      // e2e/premium-guardrails.spec.ts), matching this repo's real
-      // .env.local, where the webhook secret and price ids are the fields
-      // allowed to be empty pre-launch.
-      STRIPE_SECRET_KEY: 'sk_test_e2e_dummy_00000000000000000000000000',
-      STRIPE_PRICE_ID_MONTHLY: 'price_test_e2e_monthly',
-      STRIPE_PRICE_ID_ANNUAL: 'price_test_e2e_annual',
+  webServer: [
+    {
+      command: 'npm run build && npm run start',
+      url: baseURL,
+      timeout: 120_000,
+      // Locally, reuse a server already on :3000; in CI always start fresh.
+      reuseExistingServer: !process.env.CI,
+      // Render every DB-backed route with representative preview data (server-only
+      // hatches, write NOTHING — see src/lib/queries/*.preview.ts) so the e2e
+      // a11y/landmark specs exercise populated content — the hero + ProbabilityBars,
+      // a scored/locked/voided match, a team, a league, and the ledger's calibration
+      // table + scored rows — not only empty states. ALLOW_PREVIEW=1 is the second,
+      // explicit flag every PREVIEW_* hatch requires together (src/lib/queries/shared.ts
+      // previewAllowed()) — a single stray PREVIEW_* var alone does nothing, which is
+      // exactly why it must be set here for any of them to fire in this production
+      // build. Merged over process.env (CI provides the dummy NEXT_PUBLIC_* there;
+      // locally `next` reads them from .env.local).
+      env: {
+        ALLOW_PREVIEW: '1',
+        PREVIEW_HOMEPAGE: '1',
+        PREVIEW_LEDGER: '1',
+        PREVIEW_MATCH: '1',
+        PREVIEW_TEAM: '1',
+        PREVIEW_LEAGUE: '1',
+        // v3 "full site" round: /matches (src/lib/queries/matches.ts) gets the
+        // same deterministic-preview treatment as the other primary DB-backed
+        // surfaces above, so its day-grouping/probability-bar assertions
+        // (e2e/full-site.spec.ts) don't depend on whatever the live tournament
+        // schedule happens to be on the day the suite runs. /leagues and
+        // /stats/golden-boot deliberately have NO preview hatch of their own
+        // (they degrade to an honest empty state on any backing-store
+        // condition), so they run against whichever real Supabase project this
+        // build's .env.local points at.
+        PREVIEW_MATCHES: '1',
+        // v2 premium (e2e/premium.spec.ts): fake-but-well-formed test-mode
+        // values so /premium renders its REAL £4/£29 Checkout buttons instead
+        // of the "not switched on yet" fallback (src/lib/stripe/plans.ts's
+        // plansConfigured() needs both price ids; the page's canCheckout also
+        // needs a truthy STRIPE_SECRET_KEY). These are never used to make a
+        // real Stripe API call in this suite — getStripe() only constructs the
+        // SDK client (no network call at construction time), and every e2e
+        // request that would actually reach Stripe (checkout/portal) is
+        // anonymous and redirects to /login first. Deliberately NOT setting
+        // STRIPE_WEBHOOK_SECRET here: leaving it unset exercises the webhook
+        // route's genuine pre-launch 503-degradation path (see
+        // e2e/premium-guardrails.spec.ts), matching this repo's real
+        // .env.local, where the webhook secret and price ids are the fields
+        // allowed to be empty pre-launch.
+        STRIPE_SECRET_KEY: 'sk_test_e2e_dummy_00000000000000000000000000',
+        STRIPE_PRICE_ID_MONTHLY: 'price_test_e2e_monthly',
+        STRIPE_PRICE_ID_ANNUAL: 'price_test_e2e_annual',
+      },
     },
-  },
+    // W4 empty-homepage variant (see the EMPTY_HOME_PORT note above). The
+    // script owns its own env (PREVIEW_HOMEPAGE=empty + everything else
+    // mirroring the entry above), waits for :3000 so the two `next build`s
+    // don't compete for CPU/RAM, then builds in a temp workspace and serves.
+    // The generous timeout covers wait + copy + a second full build.
+    ...(includeEmptyHomeServer
+      ? [
+          {
+            command: 'node e2e/empty-home-server.mjs',
+            url: `http://localhost:${EMPTY_HOME_PORT}`,
+            timeout: 420_000,
+            reuseExistingServer: !process.env.CI,
+          },
+        ]
+      : []),
+  ],
 });

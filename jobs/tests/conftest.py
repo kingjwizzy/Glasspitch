@@ -39,6 +39,9 @@ class FakeStore:
         now=None,
         leagues=None,
         top_scorers=None,
+        user_predictions=None,
+        pick_aggregates=None,
+        snapshots=None,
     ):
         self._upcoming = list(upcoming or [])
         self._finished = list(finished or [])
@@ -50,6 +53,11 @@ class FakeStore:
         # explicitly seeded here mirrors "fetch_fixtures hasn't synced it yet".
         self._leagues: dict[int, int] = dict(leagues or {})
         self.top_scorers: list[dict] = [dict(r) for r in (top_scorers or [])]
+        # W5 (migration 0006): "Beat the Model" picks, their crowd aggregates,
+        # and the Gameweek Board / Fixture Ticker snapshots.
+        self.user_predictions: list[dict] = [dict(p) for p in (user_predictions or [])]
+        self.pick_aggregates: list[dict] = [dict(a) for a in (pick_aggregates or [])]
+        self.snapshots: list[dict] = [dict(s) for s in (snapshots or [])]
         # recorded writes
         self.upserted_leagues: list[dict] = []
         self.upserted_teams: list[dict] = []
@@ -60,6 +68,9 @@ class FakeStore:
         self.closed_terminal: list[int] = []
         self.scored: list[dict] = []
         self.replace_top_scorers_calls: list[dict] = []
+        self.user_pick_scores: list[dict] = []
+        self.aggregate_writes: list[dict] = []
+        self.snapshot_writes: list[list[dict]] = []
         self._seq = 0
 
     # ----- reads -----
@@ -230,6 +241,127 @@ class FakeStore:
                 }
                 mismatches.append(row)
         return mismatches
+
+    # ----- W5 (migration 0006): user_predictions scoring + pick aggregates --
+    # Mirrors jobs.db.SupabaseStore's method surface for
+    # jobs/score_user_predictions.py. Fixtures are looked up across BOTH the
+    # upcoming and finished lists (the real queries join fixtures with no
+    # status filter for the kickoff-lock check, and status='finished' only for
+    # the scoring pass).
+    def _fixtures_by_id(self):
+        return {f["id"]: f for f in [*self._finished, *self._upcoming]}
+
+    def locked_user_predictions_due_for_scoring(self):
+        """Mirrors jobs.db.SupabaseStore.locked_user_predictions_due_for_scoring:
+        user_predictions rows with no scored_at yet whose fixture is FINISHED,
+        the fixture's finals embedded under "fixture" -- same shape as
+        locked_predictions_due_for_scoring, scoped to the OTHER table."""
+        finished_by_id = {f["id"]: f for f in self._finished}
+        rows = []
+        for pick in self.user_predictions:
+            if pick.get("scored_at") is not None:
+                continue
+            fixture = finished_by_id.get(pick["fixture_id"])
+            if fixture is None or fixture.get("status") != "finished":
+                continue
+            row = dict(pick)
+            row["fixture"] = {
+                "id": fixture["id"],
+                "status": fixture["status"],
+                "final_home_goals": fixture.get("final_home_goals"),
+                "final_away_goals": fixture.get("final_away_goals"),
+            }
+            rows.append(row)
+        return rows
+
+    def write_user_prediction_score(
+        self, prediction_id, *, result, brier_score, scored_at=None
+    ):
+        self.user_pick_scores.append(
+            {
+                "id": prediction_id,
+                "result": result,
+                "brier_score": brier_score,
+                "scored_at": scored_at,
+            }
+        )
+        for pick in self.user_predictions:
+            if pick["id"] == prediction_id:
+                pick.update(
+                    {"result": result, "brier_score": brier_score, "scored_at": scored_at}
+                )
+
+    def locked_fixture_ids_with_user_picks(self):
+        """Fixture ids with >=1 pick whose kickoff has passed (LOCKED) --
+        kickoff only, no status filter, exactly like the real store's
+        fixtures!inner kickoff_utc <= now() join."""
+        fixtures_by_id = self._fixtures_by_id()
+        ids = set()
+        for pick in self.user_predictions:
+            fixture = fixtures_by_id.get(pick["fixture_id"])
+            if fixture is None:
+                continue
+            if util.parse_iso(fixture["kickoff_utc"]) <= self._now:
+                ids.add(pick["fixture_id"])
+        return ids
+
+    def existing_pick_aggregate_fixture_ids(self):
+        return {a["fixture_id"] for a in self.pick_aggregates}
+
+    def user_prediction_probs_for_fixture(self, fixture_id):
+        return [
+            {
+                "prob_home": p["prob_home"],
+                "prob_draw": p["prob_draw"],
+                "prob_away": p["prob_away"],
+            }
+            for p in self.user_predictions
+            if p["fixture_id"] == fixture_id
+        ]
+
+    def upsert_fixture_pick_aggregate(
+        self, *, fixture_id, n_picks, avg_prob_home, avg_prob_draw, avg_prob_away
+    ):
+        row = {
+            "fixture_id": fixture_id,
+            "n_picks": n_picks,
+            "avg_prob_home": avg_prob_home,
+            "avg_prob_draw": avg_prob_draw,
+            "avg_prob_away": avg_prob_away,
+        }
+        self.aggregate_writes.append(dict(row))
+        existing = next(
+            (a for a in self.pick_aggregates if a["fixture_id"] == fixture_id), None
+        )
+        if existing is not None:
+            existing.update(row)
+        else:
+            self.pick_aggregates.append(dict(row))
+
+    # ----- W5 (migration 0006): team_probability_snapshots -----------------
+    # Mirrors jobs.db.SupabaseStore for jobs/snapshot_probabilities.py --
+    # upsert keyed on the (snapshot_date, team_id, fixture_id) PK, so a
+    # same-day re-run updates in place instead of duplicating rows.
+    def team_probability_snapshots_for_date(self, snapshot_date):
+        return [dict(s) for s in self.snapshots if s["snapshot_date"] == snapshot_date]
+
+    def upsert_team_probability_snapshots(self, rows):
+        self.snapshot_writes.append([dict(r) for r in rows])
+        for row in rows:
+            key = (row["snapshot_date"], row["team_id"], row["fixture_id"])
+            existing = next(
+                (
+                    s
+                    for s in self.snapshots
+                    if (s["snapshot_date"], s["team_id"], s["fixture_id"]) == key
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(row)
+            else:
+                self.snapshots.append(dict(row))
+        return len(rows)
 
     # ----- writes -----
     def upsert_league(self, **kw):
@@ -581,6 +713,9 @@ class FakeSupabaseClient:
         predictions=None,
         job_runs=None,
         top_scorers=None,
+        user_predictions=None,
+        fixture_pick_aggregates=None,
+        team_probability_snapshots=None,
     ):
         self.tables: dict[str, list[dict]] = {
             "leagues": [dict(r) for r in (leagues or [])],
@@ -590,6 +725,16 @@ class FakeSupabaseClient:
             "job_runs": [dict(r) for r in (job_runs or [])],
             "top_scorers": [dict(r) for r in (top_scorers or [])],
         }
+        # W5 (migration 0006) tables: only materialised when a test seeds
+        # them (table() setdefaults on first touch otherwise), so "the store
+        # never issued a query at all" stays assertable via key absence.
+        for name, rows in (
+            ("user_predictions", user_predictions),
+            ("fixture_pick_aggregates", fixture_pick_aggregates),
+            ("team_probability_snapshots", team_probability_snapshots),
+        ):
+            if rows is not None:
+                self.tables[name] = [dict(r) for r in rows]
         self.delete_log: list[str] = []
         self.rpc_calls: list[tuple[str, dict]] = []
 
@@ -723,6 +868,33 @@ def make_prediction():
             "result": None,
             "brier_score": None,
             "log_loss": None,
+            "scored_at": None,
+        }
+        base.update(overrides)
+        return base
+
+    return _make
+
+
+@pytest.fixture
+def make_user_pick():
+    """A user_predictions row (migration 0006) -- a "Beat the Model" pick.
+    Defaults match make_fixture's default fixture (id=300) and carry NO
+    scoring fields yet (the shape a user's owner-scoped insert produces;
+    result/brier_score/scored_at are service-role-only)."""
+
+    def _make(**overrides):
+        base = {
+            "id": "pick-1",
+            "user_id": "user-1",
+            "fixture_id": 300,
+            "prob_home": 0.5,
+            "prob_draw": 0.3,
+            "prob_away": 0.2,
+            "created_at": "2026-06-10T09:00:00+00:00",
+            "updated_at": "2026-06-10T09:00:00+00:00",
+            "result": None,
+            "brier_score": None,
             "scored_at": None,
         }
         base.update(overrides)

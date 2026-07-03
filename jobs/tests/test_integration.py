@@ -28,21 +28,25 @@ RPC in a `finally` block, using a season number unique to that test run (see
 `_isolated_season`), so repeated runs against a persistent (non-CI) project
 never accumulate garbage and never collide with concurrent runs.
 
-These tests assume migrations 0001 -> 0005 are ALREADY applied to the target
+These tests assume migrations 0001 -> 0006 are ALREADY applied to the target
 FROM SCRATCH (CI's `supabase db reset` step does this before invoking `pytest
 -m integration` -- it replays every file in supabase/migrations/ in order, so
-0005 is included automatically with no CI change needed; a developer running
+0006 is included automatically with no CI change needed; a developer running
 this locally runs the same via the Supabase CLI). We don't re-apply the
 migration files ourselves -- instead, every 0003-introduced object/behaviour
 (job_runs, 'void_cancelled', the DELETE guard, the extended freeze,
 teardown_season), every 0004-introduced object/behaviour
 (`profiles`/`subscriptions`/`stripe_events`/`fixture_insights`,
-`handle_new_user()`, `public.is_premium()`, and their RLS), AND 0005's
+`handle_new_user()`, `public.is_premium()`, and their RLS), 0005's
 `public.top_scorers` (public data, NOT premium -- anon/authenticated get a
-real SELECT, only service_role writes) is exercised directly, so a schema
-that DIDN'T migrate cleanly to 0005 fails these tests immediately
-(table/column/function/policy would not exist) rather than silently
-no-op'ing.
+real SELECT, only service_role writes), AND every 0006-introduced
+object/behaviour (`pools`/`pool_members`/`user_predictions` with their
+owner-scoped RLS, the kickoff write-window trigger, the scoring-field column
+grants, `public.join_pool()`/`public.is_pool_member()`, plus the two public
+jobs-written read surfaces `fixture_pick_aggregates`/
+`team_probability_snapshots`) is exercised directly, so a schema that DIDN'T
+migrate cleanly to 0006 fails these tests immediately (table/column/function/
+policy would not exist) rather than silently no-op'ing.
 
 v2 premium (0004) additions to this file create REAL `auth.users` rows via the
 service-role client's `auth.admin.create_user()`/`delete_user()` (the local
@@ -57,6 +61,14 @@ delete cascade` to `public.leagues (id)`, so deleting the league (one of
 teardown_season's own DELETE statements) removes any seeded top_scorers rows
 too, even though teardown_season's SQL body never mentions top_scorers by
 name.
+
+0006 additions follow the same two cleanup routes: `teardown_season` deletes
+the seeded fixtures/teams (cascading through `user_predictions`,
+`fixture_pick_aggregates` and `team_probability_snapshots` via their own
+`on delete cascade` FKs), and `auth.admin.delete_user()` cascades through
+`profiles` into `pools` (owner FK), `pool_members` and `user_predictions`
+(user FKs) -- so every game-table row a test creates is removed without any
+of these tables ever being named in a DELETE.
 """
 
 from __future__ import annotations
@@ -758,3 +770,507 @@ def test_anon_can_select_top_scorers_but_cannot_write(real_store, isolated_seaso
             anon_client.table("top_scorers").delete().eq("league_id", league_id).execute()
     finally:
         real_store.teardown_season(isolated_season)
+
+
+# ==============================================================================
+# migration 0006: pools / pool_members / user_predictions (owner-scoped game
+# tables -- ARCHITECTURE.md v3 §5's third writer class; zero anon access) +
+# fixture_pick_aggregates / team_probability_snapshots (public, jobs-written
+# only -- same access class as top_scorers). The football tables and the
+# model's ledger stay jobs-only; nothing here touches them.
+# ==============================================================================
+
+
+def _seed_game_fixture(store, *, season, kickoff_delta, index=0):
+    """One league / two teams / one fixture (NO prediction row -- the game
+    tables reference fixtures directly), scoped under `season` so
+    `teardown_season` removes it (cascading through user_predictions /
+    fixture_pick_aggregates / team_probability_snapshots). `kickoff_delta`
+    positions the fixture pre- or post-kickoff for the 0006 write-window
+    trigger and lock-visibility policies; `index` disambiguates api ids when
+    one test seeds several fixtures. Returns (fixture_id, home_id, away_id).
+    upsert_league/upsert_team are idempotent on their api_* keys, so repeat
+    calls within a test reuse the same league/teams."""
+    league_id = store.upsert_league(
+        api_league_id=season, name=f"Integration League {season}",
+        slug=f"integration-league-{season}", country="Testland", season=season,
+    )
+    home_id = store.upsert_team(
+        api_team_id=season * 10 + 1, name="Integration Home FC",
+        slug=f"integration-home-{season}", league_id=league_id,
+    )
+    away_id = store.upsert_team(
+        api_team_id=season * 10 + 2, name="Integration Away FC",
+        slug=f"integration-away-{season}", league_id=league_id,
+    )
+    kickoff = util.now_utc() + kickoff_delta
+    fixture_id = store.upsert_fixture(
+        api_fixture_id=season * 100 + index, league_id=league_id,
+        home_team_id=home_id, away_team_id=away_id,
+        kickoff_utc=kickoff.isoformat(), status="scheduled",
+        final_home_goals=None, final_away_goals=None,
+    )
+    return fixture_id, home_id, away_id
+
+
+def _move_kickoff_into_the_past(store, fixture_id, **fixture_overrides):
+    """Kickoff passes: the service role moves the fixture's kickoff_utc into
+    the past (fixtures carry no immutability trigger; only the ledger does),
+    flipping every 0006 kickoff-gated behaviour -- picks close, pool-member
+    visibility opens. Extra overrides (status/finals) ride along."""
+    past = (util.now_utc() - timedelta(hours=2)).isoformat()
+    store._client.table("fixtures").update(
+        {"kickoff_utc": past, **fixture_overrides}
+    ).eq("id", fixture_id).execute()
+
+
+@requires_real_db
+def test_migration_0006_objects_are_present(real_store):
+    """Proves 0001->0006 applied: none of the five game/snapshot tables nor
+    public.is_pool_member() existed before this migration -- a schema that
+    didn't migrate cleanly to 0006 fails here immediately."""
+    result = real_store._client.rpc(
+        "is_pool_member",
+        {"p_pool_id": str(uuid.uuid4()), "p_user_id": str(uuid.uuid4())},
+    ).execute()
+    assert result.data is False  # a random pair genuinely has no membership
+
+    for table in (
+        "pools",
+        "pool_members",
+        "user_predictions",
+        "fixture_pick_aggregates",
+        "team_probability_snapshots",
+    ):
+        # service_role bypasses RLS -- this only proves the table/columns exist.
+        real_store._client.table(table).select("*").limit(1).execute()
+
+
+# --- (a) a user can insert/update their OWN pick pre-kickoff only ------------
+
+
+@requires_real_db
+def test_user_can_write_own_pick_pre_kickoff_only(real_store, isolated_season):
+    anon_key = _require_anon_key()
+    open_fixture, _h, _a = _seed_game_fixture(
+        real_store, season=isolated_season, kickoff_delta=timedelta(days=1), index=0
+    )
+    locked_fixture, _h2, _a2 = _seed_game_fixture(
+        real_store, season=isolated_season, kickoff_delta=timedelta(hours=-2), index=1
+    )
+
+    email = _new_test_email("pick-window")
+    other_email = _new_test_email("pick-victim")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    other_id = _create_confirmed_user(
+        real_store._client, email=other_email, password=password
+    )
+    try:
+        user_client = _signed_in_client(anon_key, email=email, password=password)
+
+        # Pre-kickoff: inserting their OWN pick works.
+        inserted = (
+            user_client.table("user_predictions")
+            .insert(
+                {
+                    "user_id": user_id, "fixture_id": open_fixture,
+                    "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+                }
+            )
+            .execute()
+            .data
+        )
+        assert len(inserted) == 1
+        pick_id = inserted[0]["id"]
+
+        # Pre-kickoff: updating their own probabilities works too.
+        updated = (
+            user_client.table("user_predictions")
+            .update({"prob_home": 0.6, "prob_draw": 0.25, "prob_away": 0.15})
+            .eq("id", pick_id)
+            .execute()
+            .data
+        )
+        assert float(updated[0]["prob_home"]) == pytest.approx(0.6)
+
+        # NEVER someone else's pick: an insert as another (real) user is
+        # rejected by the owner-scoped WITH CHECK, pre-kickoff or not.
+        with pytest.raises(Exception):
+            user_client.table("user_predictions").insert(
+                {
+                    "user_id": other_id, "fixture_id": open_fixture,
+                    "prob_home": 0.4, "prob_draw": 0.3, "prob_away": 0.3,
+                }
+            ).execute()
+
+        # Post-kickoff fixture: the write-window trigger closes inserts.
+        with pytest.raises(Exception):
+            user_client.table("user_predictions").insert(
+                {
+                    "user_id": user_id, "fixture_id": locked_fixture,
+                    "prob_home": 0.4, "prob_draw": 0.3, "prob_away": 0.3,
+                }
+            ).execute()
+
+        # Kickoff passes on the open fixture: updates close too.
+        _move_kickoff_into_the_past(real_store, open_fixture)
+        with pytest.raises(Exception):
+            user_client.table("user_predictions").update(
+                {"prob_home": 0.7, "prob_draw": 0.2, "prob_away": 0.1}
+            ).eq("id", pick_id).execute()
+
+        # And picks are NEVER erasable by their owner (no DELETE grant at all
+        # -- the game's own "misses stay visible" discipline).
+        with pytest.raises(Exception):
+            user_client.table("user_predictions").delete().eq("id", pick_id).execute()
+        still_there = (
+            real_store._client.table("user_predictions")
+            .select("id, prob_home")
+            .eq("id", pick_id)
+            .execute()
+            .data
+        )
+        assert len(still_there) == 1
+        assert float(still_there[0]["prob_home"]) == pytest.approx(0.6)  # last good write
+    finally:
+        real_store._client.auth.admin.delete_user(user_id)
+        real_store._client.auth.admin.delete_user(other_id)
+        real_store.teardown_season(isolated_season)
+
+
+# --- (b) scoring fields are service-role-only, in BOTH directions ------------
+
+
+@requires_real_db
+def test_user_cannot_touch_scoring_fields_but_the_scoring_job_can(
+    real_store, isolated_season
+):
+    anon_key = _require_anon_key()
+    fixture_id, _h, _a = _seed_game_fixture(
+        real_store, season=isolated_season, kickoff_delta=timedelta(days=1)
+    )
+
+    email = _new_test_email("pick-scoring")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    try:
+        user_client = _signed_in_client(anon_key, email=email, password=password)
+
+        # INSERT naming a scoring column at all: rejected at the column-grant
+        # layer (authenticated's INSERT grant covers user_id/fixture_id/prob_*
+        # only), before the trigger even gets a say.
+        with pytest.raises(Exception):
+            user_client.table("user_predictions").insert(
+                {
+                    "user_id": user_id, "fixture_id": fixture_id,
+                    "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+                    "result": "home",
+                }
+            ).execute()
+
+        # A clean pick, then every scoring column is un-UPDATE-able too.
+        pick_id = (
+            user_client.table("user_predictions")
+            .insert(
+                {
+                    "user_id": user_id, "fixture_id": fixture_id,
+                    "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+                }
+            )
+            .execute()
+            .data[0]["id"]
+        )
+        for bad_write in (
+            {"result": "home"},
+            {"brier_score": 0.0},
+            {"scored_at": util.now_utc().isoformat()},
+        ):
+            with pytest.raises(Exception):
+                user_client.table("user_predictions").update(bad_write).eq(
+                    "id", pick_id
+                ).execute()
+
+        # The fixture kicks off and finishes; the scoring job's service-role
+        # write path (jobs/score_user_predictions.py) is exempt from the
+        # write-window trigger and holds the column grants the user lacks.
+        _move_kickoff_into_the_past(
+            real_store, fixture_id,
+            status="finished", final_home_goals=2, final_away_goals=1,
+        )
+        real_store.write_user_prediction_score(
+            pick_id, result="home", brier_score=0.38,
+            scored_at=util.now_utc().isoformat(),
+        )
+        row = (
+            real_store._client.table("user_predictions")
+            .select("result, brier_score, scored_at")
+            .eq("id", pick_id)
+            .execute()
+            .data[0]
+        )
+        assert row["result"] == "home"
+        assert float(row["brier_score"]) == pytest.approx(0.38)
+        assert row["scored_at"] is not None
+    finally:
+        real_store._client.auth.admin.delete_user(user_id)
+        real_store.teardown_season(isolated_season)
+
+
+# --- (c) pool members see each other's picks only POST-kickoff ----------------
+
+
+@requires_real_db
+def test_pool_members_see_each_others_picks_only_after_kickoff(
+    real_store, isolated_season
+):
+    anon_key = _require_anon_key()
+    fixture_id, _h, _a = _seed_game_fixture(
+        real_store, season=isolated_season, kickoff_delta=timedelta(days=1)
+    )
+
+    picker_email = _new_test_email("pool-picker")
+    peer_email = _new_test_email("pool-peer")
+    outsider_email = _new_test_email("pool-outsider")
+    password = uuid.uuid4().hex
+    picker_id = _create_confirmed_user(
+        real_store._client, email=picker_email, password=password
+    )
+    peer_id = _create_confirmed_user(
+        real_store._client, email=peer_email, password=password
+    )
+    outsider_id = _create_confirmed_user(
+        real_store._client, email=outsider_email, password=password
+    )
+    try:
+        picker = _signed_in_client(anon_key, email=picker_email, password=password)
+        peer = _signed_in_client(anon_key, email=peer_email, password=password)
+        outsider = _signed_in_client(anon_key, email=outsider_email, password=password)
+
+        # The picker creates a pool (reading back the server-generated code),
+        # self-inserts their own membership (the sanctioned direct path for an
+        # owner adding themselves), and the peer joins by invite code.
+        pool = (
+            picker.table("pools")
+            .insert({"name": "Integration Pool", "owner_user_id": picker_id})
+            .execute()
+            .data[0]
+        )
+        picker.table("pool_members").insert(
+            {"pool_id": pool["id"], "user_id": picker_id, "display_name": "Picker"}
+        ).execute()
+        peer.rpc(
+            "join_pool",
+            {"p_invite_code": pool["invite_code"], "p_display_name": "Peer"},
+        ).execute()
+
+        # The picker submits a pick while the fixture is still open.
+        picker.table("user_predictions").insert(
+            {
+                "user_id": picker_id, "fixture_id": fixture_id,
+                "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+            }
+        ).execute()
+
+        def _visible_picks(client):
+            return (
+                client.table("user_predictions")
+                .select("user_id, prob_home")
+                .eq("user_id", picker_id)
+                .execute()
+                .data
+            )
+
+        # PRE-kickoff: the shared-pool peer sees NOTHING (anti-copying) --
+        # an empty result, not an error (the SELECT grant exists).
+        assert _visible_picks(peer) == []
+        # ...while the picker of course sees their own pick.
+        assert len(_visible_picks(picker)) == 1
+
+        _move_kickoff_into_the_past(real_store, fixture_id)
+
+        # POST-kickoff: the shared-pool peer now sees the locked pick...
+        peer_rows = _visible_picks(peer)
+        assert len(peer_rows) == 1
+        assert float(peer_rows[0]["prob_home"]) == pytest.approx(0.5)
+        # ...but a user sharing NO pool with the picker still sees nothing,
+        # locked or not.
+        assert _visible_picks(outsider) == []
+    finally:
+        real_store._client.auth.admin.delete_user(picker_id)
+        real_store._client.auth.admin.delete_user(peer_id)
+        real_store._client.auth.admin.delete_user(outsider_id)
+        real_store.teardown_season(isolated_season)
+
+
+# --- (d) anon: zero access to the game tables; genuine reads on the two ------
+# public jobs-written surfaces --------------------------------------------------
+
+
+@requires_real_db
+def test_anon_denied_on_game_tables_but_reads_aggregates_and_snapshots(
+    real_store, isolated_season
+):
+    anon_client = _anon_client_or_skip()
+    fixture_id, home_id, away_id = _seed_game_fixture(
+        real_store, season=isolated_season, kickoff_delta=timedelta(hours=-2)
+    )
+    try:
+        # The three game tables: zero anon grant -- every access raises (a
+        # permission error), never merely an empty/filtered result.
+        for table in ("pools", "pool_members", "user_predictions"):
+            with pytest.raises(Exception):
+                anon_client.table(table).select("*").execute()
+        with pytest.raises(Exception):
+            anon_client.table("user_predictions").insert(
+                {
+                    "user_id": str(uuid.uuid4()), "fixture_id": fixture_id,
+                    "prob_home": 0.5, "prob_draw": 0.3, "prob_away": 0.2,
+                }
+            ).execute()
+        # join_pool()'s EXECUTE is revoked from anon outright.
+        with pytest.raises(Exception):
+            anon_client.rpc(
+                "join_pool",
+                {"p_invite_code": "whatever", "p_display_name": "Anon"},
+            ).execute()
+
+        # The jobs (service role) publish the two public read surfaces...
+        real_store.upsert_fixture_pick_aggregate(
+            fixture_id=fixture_id, n_picks=3,
+            avg_prob_home=0.5, avg_prob_draw=0.3, avg_prob_away=0.2,
+        )
+        today = util.now_utc().date().isoformat()
+        real_store.upsert_team_probability_snapshots(
+            [
+                {
+                    "snapshot_date": today, "team_id": home_id,
+                    "fixture_id": fixture_id, "opponent_team_id": away_id,
+                    "is_home": True, "elo_rating": 1500,
+                    "prob_win": 0.44, "prob_draw": 0.25, "prob_loss": 0.31,
+                    "prob_clean_sheet": 0.33,
+                    "expected_goals_for": 1.58, "expected_goals_against": 1.12,
+                    "delta_elo_rating": None, "delta_prob_win": None,
+                }
+            ]
+        )
+
+        # ...and anon genuinely reads them (populated, not merely empty).
+        agg = (
+            anon_client.table("fixture_pick_aggregates")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .execute()
+            .data
+        )
+        assert len(agg) == 1
+        assert agg[0]["n_picks"] == 3
+        snaps = (
+            anon_client.table("team_probability_snapshots")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .execute()
+            .data
+        )
+        assert len(snaps) == 1
+        assert float(snaps[0]["prob_win"]) == pytest.approx(0.44)
+
+        # But anon never writes either surface.
+        with pytest.raises(Exception):
+            anon_client.table("fixture_pick_aggregates").update({"n_picks": 999}).eq(
+                "fixture_id", fixture_id
+            ).execute()
+        with pytest.raises(Exception):
+            anon_client.table("team_probability_snapshots").delete().eq(
+                "fixture_id", fixture_id
+            ).execute()
+    finally:
+        # Cascades through fixture_pick_aggregates / team_probability_snapshots
+        # via their fixtures/teams FKs -- neither is named in any DELETE.
+        real_store.teardown_season(isolated_season)
+
+
+# --- (e) join_pool: works with a valid code, rejects bad ones -----------------
+
+
+@requires_real_db
+def test_join_pool_joins_by_code_and_rejects_bad_codes(real_store):
+    anon_key = _require_anon_key()
+
+    owner_email = _new_test_email("pool-owner")
+    joiner_email = _new_test_email("pool-joiner")
+    password = uuid.uuid4().hex
+    owner_id = _create_confirmed_user(
+        real_store._client, email=owner_email, password=password
+    )
+    joiner_id = _create_confirmed_user(
+        real_store._client, email=joiner_email, password=password
+    )
+    try:
+        owner = _signed_in_client(anon_key, email=owner_email, password=password)
+        joiner = _signed_in_client(anon_key, email=joiner_email, password=password)
+
+        pool = (
+            owner.table("pools")
+            .insert({"name": "Join-Code Pool", "owner_user_id": owner_id})
+            .execute()
+            .data[0]
+        )
+
+        # A valid code: membership lands and the RPC reports the joined pool.
+        result = joiner.rpc(
+            "join_pool",
+            {"p_invite_code": pool["invite_code"], "p_display_name": "Joiner"},
+        ).execute()
+        assert result.data["pool_id"] == pool["id"]
+        assert result.data["pool_name"] == "Join-Code Pool"
+
+        # Membership is real: the joiner can now see the pool row itself
+        # (pools' member-scoped SELECT policy) and their own member row.
+        visible_pools = (
+            joiner.table("pools").select("id, name").eq("id", pool["id"]).execute().data
+        )
+        assert [p["name"] for p in visible_pools] == ["Join-Code Pool"]
+        members = (
+            joiner.table("pool_members")
+            .select("user_id, display_name")
+            .eq("pool_id", pool["id"])
+            .execute()
+            .data
+        )
+        assert {m["user_id"] for m in members} == {joiner_id}
+
+        # Idempotent: re-submitting the same code refreshes the display name
+        # instead of erroring on the (pool_id, user_id) primary key.
+        joiner.rpc(
+            "join_pool",
+            {"p_invite_code": pool["invite_code"], "p_display_name": "Renamed"},
+        ).execute()
+        members = (
+            joiner.table("pool_members")
+            .select("display_name")
+            .eq("pool_id", pool["id"])
+            .execute()
+            .data
+        )
+        assert [m["display_name"] for m in members] == ["Renamed"]
+
+        # A bad code is rejected outright -- no membership row appears.
+        with pytest.raises(Exception):
+            joiner.rpc(
+                "join_pool",
+                {"p_invite_code": "not-a-real-code", "p_display_name": "Joiner"},
+            ).execute()
+        member_count = (
+            real_store._client.table("pool_members")
+            .select("user_id")
+            .eq("user_id", joiner_id)
+            .execute()
+            .data
+        )
+        assert len(member_count) == 1  # still only the legitimate join
+    finally:
+        # Deleting the owner cascades auth.users -> profiles -> pools (owner
+        # FK) -> pool_members, so no game-table row survives this cleanup.
+        real_store._client.auth.admin.delete_user(owner_id)
+        real_store._client.auth.admin.delete_user(joiner_id)

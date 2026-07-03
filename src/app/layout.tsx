@@ -106,7 +106,9 @@ export default function RootLayout({
         {/* Persistent disclaimer on every page (ARCHITECTURE.md §13). */}
         <DisclaimerBanner />
         <Header />
-        <main className="mx-auto w-full max-w-screen-md flex-1 px-4 py-6">
+        {/* W4: the shell widens to max-w-6xl at lg (header/main/footer together
+            so edges align) and the home page composes a 12-col grid inside it. */}
+        <main className="mx-auto w-full max-w-screen-md flex-1 px-4 py-6 lg:max-w-6xl">
           {children}
         </main>
         <Footer />
