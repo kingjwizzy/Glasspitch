@@ -116,10 +116,13 @@ _COMPARISON_KEYS = ("form", "att", "def", "poisson_distribution", "h2h", "goals"
 _LAST_5_KEYS = ("form", "played", "goals")
 
 
-def _curate_winner(winner: Optional[dict]) -> Optional[dict]:
+def _curate_winner(winner: Optional[dict]) -> Optional[str]:
+    # Name only. The API's ``winner.comment`` carries double-chance betting
+    # phrasing ("Win or draw") -- same compliance class as the excluded
+    # ``advice``/``win_or_draw``/``under_over`` fields (§9/§13).
     if not winner:
         return None
-    return {"name": winner.get("name"), "comment": winner.get("comment")}
+    return winner.get("name")
 
 
 def _curate_comparison(comparison: dict) -> dict:
@@ -178,10 +181,12 @@ def build_prediction_detail_payload(payload: dict) -> Optional[dict]:
     # `win_or_draw`/`under_over` are betting-market terms (double chance,
     # goals line). None of them may be stored, let alone rendered, on a
     # product whose legal position is "analysis, not betting advice" — so
-    # they are deliberately excluded from the curated payload.
+    # they are deliberately excluded from the curated payload -- as are
+    # ``winner.comment`` ("Win or draw" double-chance phrasing) and the
+    # handicap-style ``predictions.goals`` line ("-1.5"); the predicted
+    # scoreline already lives on the free ledger row.
     curated = {
         "winner": _curate_winner(predictions.get("winner")),
-        "goals": predictions.get("goals"),
         "percent": predictions.get("percent"),
         "comparison": _curate_comparison(comparison),
         "teams_last_5": {

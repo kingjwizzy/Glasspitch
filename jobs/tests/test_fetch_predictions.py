@@ -153,7 +153,8 @@ def test_run_inserts_a_curated_prediction_detail_insight_for_a_rich_payload(
     assert "advice" not in payload
     assert "win_or_draw" not in payload
     assert "under_over" not in payload
-    assert payload["winner"] == {"name": "Brazil", "comment": "Win or draw"}
+    assert payload["winner"] == "Brazil"
+    assert "goals" not in payload  # handicap-style line -- never stored (§9/§13)
     assert payload["percent"] == {"home": "50%", "draw": "30%", "away": "20%"}
     assert set(payload["comparison"].keys()) == {
         "form", "att", "def", "poisson_distribution", "h2h", "goals", "total",
@@ -227,7 +228,7 @@ def test_run_curates_a_sparse_payload_without_storing_wholly_empty_sections(
     assert counts["insight_inserted"] == 1
     payload = store.insights[0]["payload"]
     assert "advice" not in payload
-    assert payload["winner"] == {"name": "Brazil", "comment": "Win or draw"}
+    assert payload["winner"] == "Brazil"
     assert "comparison" not in payload
     assert "h2h_summary" not in payload
 

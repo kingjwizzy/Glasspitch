@@ -14,9 +14,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // Idempotency: insert-first into `stripe_events` keyed on the Stripe event
 // id — a primary-key conflict means we've already processed this exact event,
 // so we return 200 immediately without re-handling it (Stripe retries
-// webhooks; this makes replays and races harmless). Always returns fast and
-// always 200 once the event is durably recorded, so Stripe doesn't retry a
-// permanent failure our own bug caused.
+// webhooks; this makes replays and races harmless). If handling then FAILS,
+// the idempotency row is removed and a 500 is returned so Stripe retries —
+// a billing state change must never be silently dropped (gate finding,
+// 2026-07-03): a lost checkout.session.completed would leave a paying user
+// without premium; a lost subscription.deleted would leave lingering access.
 export const runtime = 'nodejs';
 
 function serviceUnavailable(message: string) {
@@ -46,7 +48,7 @@ async function upsertFromCheckoutSession(
   admin: SupabaseClient<Database>,
   stripe: Stripe,
   session: Stripe.Checkout.Session,
-): Promise<void> {
+): Promise<boolean> {
   const userId =
     session.client_reference_id ?? (session.metadata?.supabase_user_id as string | undefined);
   const customerId =
@@ -54,7 +56,7 @@ async function upsertFromCheckoutSession(
 
   if (!userId || !customerId) {
     console.error('stripe/webhook: checkout.session.completed missing user/customer', session.id);
-    return;
+    return false;
   }
 
   let status = 'incomplete';
@@ -89,13 +91,17 @@ async function upsertFromCheckoutSession(
     // a re-subscribe after cancelling updates the same row.
     { onConflict: 'stripe_customer_id' },
   );
-  if (error) console.error('stripe/webhook: subscriptions upsert failed', error.message);
+  if (error) {
+    console.error('stripe/webhook: subscriptions upsert failed', error.message);
+    return false;
+  }
+  return true;
 }
 
 async function upsertFromSubscription(
   admin: SupabaseClient<Database>,
   subscription: Stripe.Subscription,
-): Promise<void> {
+): Promise<boolean> {
   const customerId =
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
   const userId = await resolveUserId(
@@ -105,8 +111,11 @@ async function upsertFromSubscription(
   );
 
   if (!userId) {
+    // Possibly an ordering race (subscription.* landing before
+    // checkout.session.completed created the mapping row) — fail so Stripe
+    // retries; the retry succeeds once the mapping exists.
     console.error('stripe/webhook: could not resolve user_id for subscription', subscription.id);
-    return;
+    return false;
   }
 
   const item = subscription.items.data[0];
@@ -123,7 +132,11 @@ async function upsertFromSubscription(
     },
     { onConflict: 'stripe_customer_id' },
   );
-  if (error) console.error('stripe/webhook: subscriptions upsert failed', error.message);
+  if (error) {
+    console.error('stripe/webhook: subscriptions upsert failed', error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function POST(request: NextRequest) {
@@ -165,23 +178,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Could not record event.' }, { status: 500 });
   }
 
+  let handled = true;
   try {
     switch (event.type) {
       case 'checkout.session.completed':
-        await upsertFromCheckoutSession(admin, stripe, event.data.object);
+        handled = await upsertFromCheckoutSession(admin, stripe, event.data.object);
         break;
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
-        await upsertFromSubscription(admin, event.data.object);
+        handled = await upsertFromSubscription(admin, event.data.object);
         break;
       default:
         break;
     }
   } catch (err) {
-    // Already durably recorded in stripe_events above; log and still return
-    // 200 so Stripe doesn't retry forever on a bug in our own handling.
     console.error(`stripe/webhook: error handling ${event.type}`, err);
+    handled = false;
+  }
+
+  if (!handled) {
+    // Undo the idempotency record so Stripe's retry isn't swallowed as a
+    // duplicate, and signal failure so it DOES retry (with backoff, visible
+    // in the Stripe dashboard if it keeps failing).
+    const { error: undoError } = await admin.from('stripe_events').delete().eq('id', event.id);
+    if (undoError) {
+      console.error('stripe/webhook: failed to undo stripe_events row', undoError.message);
+    }
+    return NextResponse.json({ error: 'Event handling failed.' }, { status: 500 });
   }
 
   return NextResponse.json({ received: true });
