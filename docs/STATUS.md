@@ -1,111 +1,87 @@
 # STATUS — Glass Pitch
 
-**Last updated:** 2026-07-03
-**Overall state:** **v2 is LIVE at https://glasspitch.com.** The site is public,
-reading the real FIFA World Cup 2026 knockouts from Supabase, with the full
-hardening pass and the premium stack shipped. Premium runs in **Stripe test
-mode** — gated routes are built, noindexed, and unlinked from the public nav
-until the owner's launch gate below clears. The scheduler cron is **on**
-(GitHub Actions, repo now public → unlimited minutes).
+**Last updated:** 2026-07-04 (launch night +1).
+**Overall state:** **v3 is LIVE at https://glasspitch.com** — the full product:
+redesigned flag-rich homepage with the World Cup Chances circles, Beat the
+Model pools (/play), Gameweek Board + Ticker (/board), share/OG receipt
+cards, original illustration pack, £6/£39 premium (Stripe **approved for
+live payments**; final wiring in progress tonight), and a scored, hash-chain-
+verifiable public ledger. The pipeline runs itself on GitHub Actions.
 
-> Snapshot reflects `main` after the `feat/v2-launch` merge (v2 go-live,
-> 2026-07-03). Source-of-truth specs: `docs/ARCHITECTURE.md` (carrying the
-> 2026-07-03 v2 amendments), `docs/DESIGN.md`, `docs/SEEDING.md`, `CLAUDE.md`.
-
----
-
-## ✅ Live production state (2026-07-03)
-
-- **Site:** https://glasspitch.com (+ www) on Vercel, project `glasspitch`
-  (team `venture2`), custom domain verified, all public routes static/ISR.
-- **Data:** WC 2026 (league 1, season 2026) — 94 fixtures, 48 teams live;
-  the 2022 dev seed was torn down via `teardown_season()` before the cutover.
-- **The ledger is live:** first real predictions published for the Round-of-16
-  window (7 fixtures within the 72h fetch window at cutover), locking at their
-  kickoffs — the first at 2026-07-03 18:00 UTC (Australia v Egypt). Elo logged
-  silently alongside; `prediction_detail` insights stored for premium.
-- **DB:** migrations 0001→0004 applied live. Grant-layer read-only for
-  anon/authenticated, ledger DELETE guard + scored-row freeze, `job_runs`
-  observability, premium tables (profiles/subscriptions/stripe_events/
-  fixture_insights) with subscriber-only RLS via `is_premium()`. Security
-  advisor: zero warnings (two deliberate INFO notes on deny-all tables).
-- **Scheduler:** all six crons enabled — fetch_fixtures 6h, fetch_predictions
-  daily 06:15, fetch_insights 6h@:45, lock 10m, score 20m, keepalive monthly.
-  Per-job failure alerting opens/reuses a GitHub issue; every run writes a
-  `job_runs` row.
-- **Stripe (test mode):** product `glasspitch-premium` (£4/mo, £29/yr),
-  webhook endpoint live at `/api/stripe/webhook` (signature-verified,
-  idempotent, retry-on-failure semantics).
-- **Tests:** 169 pytest + 11 integration (real Postgres in CI) + 116
-  Playwright/axe. Gate review (checks-reviewer): PASS; its three warnings
-  (auth open-redirect, webhook silent-drop, double-chance phrasing in stored
-  insights) were fixed pre-launch.
+> Sources of truth: `docs/ARCHITECTURE.md` (v2+v3 amendments), `docs/DESIGN.md`,
+> `docs/ROADMAP.md` (strategy + build queue), `docs/SEEDING.md`,
+> `docs/STRIPE-VETTING.md` (submitted; approval received 2026-07-04).
 
 ---
 
-## 🚦 Owner launch gate — premium live-mode flip
+## ✅ Live production state
 
-Premium stays in test mode until ALL of these clear (ARCHITECTURE.md §13):
+- **Site:** glasspitch.com (+www), Vercel **Pro**, project `glasspitch`
+  (team `venture2`), GitHub auto-deploys on push to main.
+- **Data:** WC 2026 live — 94 fixtures with rounds + winner flags (penalty
+  shootouts handled via `winner_team_id`), 48 teams, Golden Boot top-15,
+  probability snapshots, 18-nation tournament chances (10k Monte Carlo,
+  2× daily). Status polling every 15 min (frozen-status incident 2026-07-03
+  fixed same night).
+- **Ledger:** first calls scored (first receipt honestly a miss on a 45/45
+  coin-flip); nightly private JSON backups to Storage + public SHA-256 hash
+  chain in `ledger_checkpoints` — third parties can verify the record.
+- **DB:** migrations 0001→0007 applied + verified live. Writers: jobs
+  (football data) · Stripe webhook (billing) · owner-scoped user game picks
+  · email-capture route (dormant until Resend key). Grant-layer +
+  RLS + trigger enforcement throughout; advisors clean (2 documented
+  SECURITY DEFINER WARNs on pool RPCs, intentional).
+- **Jobs (11):** fetch_fixtures (15m), fetch_predictions (daily),
+  fetch_insights (6h), fetch_topscorers (daily), lock (10m), score (20m),
+  score_user_predictions (20m), snapshot_probabilities (daily),
+  simulate_chances (2×daily), ledger_integrity (nightly), keepalive
+  (monthly). Per-job failure alerting via GitHub issues + job_runs rows.
+- **Premium (£6/mo · £39/yr):** Stripe LIVE approval received. Test-mode
+  stack fully verified; live product+prices exist, live env vars in Vercel
+  (sensitive/write-only). Remaining to flip: owner creates the live webhook
+  endpoint (+ whsec → Vercel) and saves the live Customer Portal config,
+  then set NEXT_PUBLIC_PREMIUM_LIVE=1 → gold header CTA + /premium
+  indexability switch on, owner does a real-card test + self-refund.
+- **Tests:** 272 pytest + 23 integration (real Postgres in CI) + 252
+  Playwright/axe. Final gate (2026-07-04): invariant audit fully clean;
+  its 2 CI findings + repricing stragglers fixed same hour.
 
-1. **Stripe restricted-business vetting** — "sports forecasting" is on
-   Stripe's restricted list; get their written OK (position: statistics/
-   analysis, no odds, no tips, losses published — the ledger is the exhibit).
-2. **Professional legal sign-off** — the disclaimer copy, `/privacy`,
-   `/terms`, `/refunds` drafts (all live, each footnoted "draft pending
-   professional review"), and the no-Gambling-Commission-licence confirmation.
-3. **Eyeball the responsible-gambling resources** — live at
-   `/responsible-gambling`: National Gambling Helpline 0808 8020 133
-   (verified on gamcare.org.uk at build time), GAMSTOP, GambleAware.
-4. **ICO registration** before promoting sign-ups (accounts hold email +
-   billing metadata once real users exist).
-5. **Supabase Auth config (dashboard):** allow-list
-   `https://glasspitch.com/auth/callback` and `/auth/confirm` as redirect
-   URLs; add a production SMTP provider (Resend/Postmark) before real
-   sign-up volume. Until then magic-link auth works only at Supabase's
-   built-in trickle rate — fine for owner testing.
-6. Flip: swap Stripe test keys → live keys in Vercel env, link the auth
-   affordance into the nav, remove the noindex on `/premium`.
+## 🚦 Owner queue (nothing blocks the site; premium flip items first)
 
-## 🟡 Known post-launch items
+1. Live webhook endpoint + whsec → Vercel; live Customer Portal save (exact
+   steps given in-session) → then Claude flips premium live.
+2. Real-card £6 test purchase → self-refund (the go-live proof).
+3. Resend account + RESEND_API_KEY + EMAIL_CAPTURE_ENABLED=1 → email capture
+   activates itself (double-opt-in ready, GDPR-delete unsubscribe).
+4. @glasspitch on X + Bluesky → receipt-posting cadence per ROADMAP §3.
+5. Wikimedia player-photo legal answer (Golden Boot faces) — flags meanwhile.
+6. Google Search Console + sitemap submit; Sentry DSNs when convenient.
 
-- **Vercel GitHub app not connected** (`vercel git connect` needs the app
-  install — one click by the owner). Until then deploys are CLI-driven
-  (`npx vercel deploy --prod`); pushes do NOT auto-deploy.
-- **Sentry** (web + jobs DSNs) still unwired — pipeline failure alerting
-  exists via GitHub issues + `job_runs`; error monitoring on the web layer is
-  the gap. Vercel Web Analytics can be enabled in the dashboard (cookieless).
-- `middleware.ts` → `proxy` rename (Next 16 deprecation warning, non-blocking).
-- Local `jobs/.venv` runs Python 3.14 vs CI's pinned 3.12 (rebuild for parity).
-- `src/lib/database.types.ts` deliberately omits jobs-only objects
-  (`job_runs`, `is_premium`, `teardown_season`) — web never touches them.
-- Club-football scale work (multi-league schema: `UNIQUE(api_league_id,
-  season)`, team slug collisions, provider seam for football-data.org) is
-  designed in the audit but deferred until after the World Cup.
+## 🟡 Known items / fast-follows
 
-## 🔭 Deferred (unchanged)
-
-- Email capture/newsletter; "Beat the model" game (DESIGN.md §6 reserve);
-  Golden Boot race + PWA manifest (DESIGN.md home-spec extras); editorial
-  content; promoting the in-house Elo (decided by the ledger, §9/§16).
-
----
+- StreamCard (homepage) lacks the H/A chips FixtureRow gained (consistency).
+- openMatch service-role read: add internal open-match-id re-derivation
+  (gate suggestion S1, defense-in-depth).
+- Merge the two user_predictions SELECT policies (perf, S2); opponent FK
+  index if hot (S3).
+- W7 queued: live in-play scores (60s matchday watcher + on-demand
+  revalidation + live-score columns), /bracket knockout tree page,
+  UpcomingFixtures chip consistency. Then August: club-football expansion
+  (multi-league schema, provider seam, kit-color identity, xPoints spike).
+- Ads remain OFF permanently-ish (brand + policy). Ledger stance: stays; may
+  be de-emphasized per owner direction (recording never stops regardless).
 
 ## 🔑 Key facts (operational truths for a new session)
 
-- **Golden rule (§5, amended 2026-07-03):** the website only ever reads from
-  Supabase; the Python jobs are the only football-data writers and the only
-  football-API callers; the **Stripe webhook route is the only billing-data
-  writer**. No visitor request ever calls the football API.
-- **Premium gates depth content only** — the full prediction set and the
-  complete scored ledger stay free forever. `predictions.tier` is not the
-  gating mechanism; premium data lives in `fixture_insights` behind
-  subscriber-only RLS.
-- **Key boundary:** web uses the publishable key (RLS read-only);
-  jobs + the webhook writer use the secret key (server-only). Vercel prod
-  env carries 9 vars incl. Stripe test keys; GitHub Actions carries
-  SUPABASE_URL / SUPABASE_SECRET_KEY / API_FOOTBALL_KEY.
-- **API-Football:** Pro plan (7,500 req/day, renews monthly). `/fixtures`
-  rejects an explicit `page` param — page 1 omits it (fixed live 2026-07-03).
-- **The public record starts 2026-07-03.** Never present anything earlier as
-  the live record; web reads are season-floored via NEXT_PUBLIC_MIN_SEASON
-  (default 2026) as defence in depth.
+- Golden rule + amendments: web reads only; jobs are sole football-data
+  writers + sole API callers; Ledger immutable (UPDATE+DELETE guards, scored
+  rows re-frozen); sanctioned narrow writers: Stripe webhook (billing),
+  user game picks (owner-scoped RLS, pre-kickoff only), email route.
+- Pricing £6/£39 everywhere (checkout env, copy, docs, e2e). Old £4/£29
+  Stripe test prices archived.
+- API-Football Pro (7,500/day; ~110 req/day used at current cadence).
+  /fixtures rejects a `page` param; topscorers lag the live feed slightly.
+- Supabase Pro, org `biwpenhkajguerltotfy`, project `vrcnbvijanpxrqwndnyl`.
+  Vercel Pro, team `venture2`. Repo public: kingjwizzy/Glasspitch.
+- The public record started 2026-07-03; season floor NEXT_PUBLIC_MIN_SEASON
+  guards it; hash chain anchors it.
