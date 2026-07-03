@@ -119,9 +119,25 @@ shown) — the record itself is honestly days old.
 6. **August — club-football expansion:** multi-league schema
    (UNIQUE(api_league_id, season), slug collisions), provider seam,
    kit-color identity system, xPoints modelling spike.
-7. **Pending research (liveliness/retention deep-dive)** feeds a visual
-   pass: ambient art, page variety, light-mode verdict, followed-team
-   personalization, web-push strategy (Android-first, email fallback).
+7. **World Cup Chances circles (owner concept, 2026-07-03):** Monte Carlo
+   simulation of the remaining bracket (jobs layer, from the existing match
+   model + Elo) → per-nation tournament win probability, stored per day →
+   homepage centerpiece: nation circle-flags sized by their chance of
+   winning it all, shrinking/growing after every full-time, + a /chances
+   page with the day-over-day story. Entirely flag-based (compliant), fully
+   accountable (simulations logged like everything else). Build: jobs sim
+   right after W5 lands; UI right after W4.
+8. **Player imagery decision (owner + legal contact):** Wikimedia Commons
+   CC-licensed player photos with attribution for the Golden Boot 15 —
+   copyright-cleared; personality-rights caveat to be run past the owner's
+   legal contact (one question: CC identification photos next to stats).
+   Fallback per player: nation flag + team-color initial disc. Agency-
+   licensed photography remains the revenue-gated path.
+9. **Visual pass (research complete):** original vector illustration pack
+   (hero scene, empty states, golden boot motif, match atmosphere blocks),
+   ambient CSS pitch motifs, data-art backdrops; verdict: dark stays,
+   EVOLVE with voltage — never lighten; followed-team pinning via
+   localStorage; matchday-eve email + .ics feeds; no streaks, no comments.
 
 ## 5. Owner console/admin queue
 
