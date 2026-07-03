@@ -107,6 +107,10 @@ flowchart TD
 
 **Game-picks data flow (v3 amendment, owner-approved 2026-07-03):** authenticated users may write **their own predictions in the Beat the Model game** (`user_predictions` + pools tables) through RLS owner-scoped policies (`auth.uid() = user_id`, insert/update only while the fixture is unlocked — enforced by trigger against `fixtures.kickoff_utc`, mirroring the ledger's lock discipline). This writer class touches game tables **only**; the football tables and the model's ledger remain jobs-only. Scoring of user picks is a jobs-layer concern (reuses the Brier machinery).
 
+**Email-capture writer (v3 amendment, 2026-07-03, ROADMAP item 4):** a dedicated server-only route handler may write `email_subscribers` (email, double-opt-in state, consent timestamps — nothing else) — the third narrow writer alongside the Stripe webhook and game-picks paths. Zero anon read access; sends go through the configured SMTP provider (env-gated: absent key → the capture surface renders a quiet "coming soon" state, never a crash). GDPR: double opt-in, one-click unsubscribe, listed in /privacy.
+
+**Ledger integrity ops (v3, 2026-07-03):** a nightly jobs-layer export writes full-table JSON snapshots to a PRIVATE Supabase Storage bucket (service-role only), and a SHA-256 hash chain over scored ledger rows is published publicly so third parties can verify the record was never rewritten — the transparency claim made checkable.
+
 **Second data source (v3 amendment, owner-approved 2026-07-03):** the official Fantasy Premier League API joins API-Football as a jobs-layer source (fixture difficulty/ownership/pricing context for FPL tooling). The golden rule is unchanged: only the scheduled jobs call external APIs; ToS reviewed at implementation; no scraping.
 
 **Main services:** API-Football (data), Supabase (Postgres + auth-ready), Vercel (web hosting + cron or an external scheduler), Sentry (errors), Plausible or GA4 (analytics).
