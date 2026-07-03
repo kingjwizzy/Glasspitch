@@ -7,6 +7,7 @@ import PredictionPanel from '@/components/match/PredictionPanel';
 import ScoredResult from '@/components/match/ScoredResult';
 import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
+import DeeperReadCallout from '@/components/match/DeeperReadCallout';
 import { getMatchData, type MatchData } from '@/lib/queries/match';
 import { formatDateShort, templateRead } from '@/lib/format';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
@@ -34,7 +35,9 @@ export function generateStaticParams() {
   return [];
 }
 
-function parseId(raw: string): number {
+// Exported so the sibling /match/[id]/insights route (v2 premium) parses ids
+// identically rather than duplicating this validation.
+export function parseId(raw: string): number {
   // Bare integer ids only (the route is /match/[id]), bounded to a sane digit
   // length. Without the length cap, a huge digit string still matches
   // `Number.isInteger` (JS floats represent large whole numbers exactly enough
@@ -216,6 +219,8 @@ export default async function MatchPage({ params }: MatchPageProps) {
           <p className="text-sm leading-relaxed text-fg-dim">{read}</p>
         </section>
       )}
+
+      <DeeperReadCallout fixtureId={data.id} />
 
       <LedgerCallout />
 

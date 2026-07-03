@@ -35,6 +35,30 @@ export default function Footer() {
                 Responsible gambling
               </Link>
             </li>
+            <li>
+              <Link
+                href="/privacy"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Privacy
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/terms"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Terms
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/refunds"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Refunds
+              </Link>
+            </li>
           </ul>
         </nav>
         <p className="mt-4 text-xs text-fg-dim">

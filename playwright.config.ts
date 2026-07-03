@@ -50,6 +50,23 @@ export default defineConfig({
       PREVIEW_MATCH: '1',
       PREVIEW_TEAM: '1',
       PREVIEW_LEAGUE: '1',
+      // v2 premium (e2e/premium.spec.ts): fake-but-well-formed test-mode
+      // values so /premium renders its REAL £4/£29 Checkout buttons instead
+      // of the "not switched on yet" fallback (src/lib/stripe/plans.ts's
+      // plansConfigured() needs both price ids; the page's canCheckout also
+      // needs a truthy STRIPE_SECRET_KEY). These are never used to make a
+      // real Stripe API call in this suite — getStripe() only constructs the
+      // SDK client (no network call at construction time), and every e2e
+      // request that would actually reach Stripe (checkout/portal) is
+      // anonymous and redirects to /login first. Deliberately NOT setting
+      // STRIPE_WEBHOOK_SECRET here: leaving it unset exercises the webhook
+      // route's genuine pre-launch 503-degradation path (see
+      // e2e/premium-guardrails.spec.ts), matching this repo's real
+      // .env.local, where the webhook secret and price ids are the fields
+      // allowed to be empty pre-launch.
+      STRIPE_SECRET_KEY: 'sk_test_e2e_dummy_00000000000000000000000000',
+      STRIPE_PRICE_ID_MONTHLY: 'price_test_e2e_monthly',
+      STRIPE_PRICE_ID_ANNUAL: 'price_test_e2e_annual',
     },
   },
 });

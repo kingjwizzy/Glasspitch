@@ -332,6 +332,115 @@ class SupabaseStore:
         )
         return {row["fixture_id"] for row in rows}
 
+    # ----- v2 premium: fixture_insights (ARCHITECTURE.md v2 §4/§7) -----------
+    def existing_insight_fixture_ids(self, kind: str) -> set[int]:
+        """Fixture ids that already have a ``fixture_insights`` row of
+        ``kind`` -- mirrors ``existing_prediction_fixture_ids``'s "have we
+        already fetched this" set-difference pattern (fetch_predictions.py /
+        fetch_insights.py never re-fetch what's already stored)."""
+        rows = self._paginated(
+            lambda: self._client.table("fixture_insights")
+            .select("fixture_id")
+            .eq("kind", kind)
+        )
+        return {row["fixture_id"] for row in rows}
+
+    def _finished_fixtures_with_scored_prediction(
+        self, *, api_league_ids: list[int], season: int
+    ) -> list[dict]:
+        """Finished fixtures (tracked league(s) + season) that already carry a
+        SCORED api-football prediction -- fetch_insights.py's candidate pool,
+        before subtracting fixtures that already have a post_match_stats
+        insight (see ``fixtures_needing_stats``). Ordered most-recently-
+        finished first (``kickoff_utc`` descending) so a budget-limited run
+        makes progress on the freshest matches first -- also what a premium
+        subscriber is likeliest to look up. Embeds each side's api_team_id
+        (disambiguated by FK constraint name, same convention as
+        src/lib/queries/*.ts) so the caller can call the statistics endpoint
+        without a second round-trip per fixture.
+        """
+        if not api_league_ids:
+            return []
+        rows = self._paginated(
+            lambda: self._client.table("fixtures")
+            .select(
+                "id, api_fixture_id, kickoff_utc, "
+                "home_team:teams!fixtures_home_team_id_fkey(api_team_id), "
+                "away_team:teams!fixtures_away_team_id_fkey(api_team_id), "
+                "leagues!inner(api_league_id, season), "
+                "predictions!inner(source, status)"
+            )
+            .eq("status", "finished")
+            .eq("leagues.season", season)
+            .in_("leagues.api_league_id", api_league_ids)
+            .eq("predictions.source", "api-football")
+            .eq("predictions.status", "scored")
+            .order("kickoff_utc", desc=True)
+        )
+        # The embedded predictions!inner filter is per-row, not per-fixture --
+        # a fixture only ever has ONE scored api-football prediction
+        # (predictions_fixture_model_unique + one row per source), but guard
+        # against PostgREST ever multiplying a fixture row per embedded match
+        # anyway; keep first-seen (already-sorted by kickoff_utc desc).
+        seen: dict[int, dict] = {}
+        for row in rows:
+            seen.setdefault(row["id"], row)
+        return list(seen.values())
+
+    def fixtures_needing_stats(
+        self, *, api_league_ids: list[int], season: int
+    ) -> list[dict]:
+        """fetch_insights.py's work queue: finished fixtures (tracked
+        league(s) + season) with a SCORED api-football prediction but NO
+        ``post_match_stats`` insight yet, most-recently-finished first. Each
+        returned dict carries ``id``, ``api_fixture_id``, ``kickoff_utc``,
+        ``home_team_api_id``, ``away_team_api_id``.
+        """
+        candidates = self._finished_fixtures_with_scored_prediction(
+            api_league_ids=api_league_ids, season=season
+        )
+        have_stats = self.existing_insight_fixture_ids("post_match_stats")
+
+        result = []
+        for row in candidates:
+            if row["id"] in have_stats:
+                continue
+            home_team = row.get("home_team") or {}
+            away_team = row.get("away_team") or {}
+            result.append(
+                {
+                    "id": row["id"],
+                    "api_fixture_id": row["api_fixture_id"],
+                    "kickoff_utc": row["kickoff_utc"],
+                    "home_team_api_id": home_team.get("api_team_id"),
+                    "away_team_api_id": away_team.get("api_team_id"),
+                }
+            )
+        return result
+
+    def insert_insight(
+        self, *, fixture_id: int, kind: str, payload: dict, source: str = "api-football"
+    ) -> Optional[int]:
+        """Idempotent upsert into ``fixture_insights``, keyed on its own
+        (fixture_id, kind) primary key -- unlike ``insert_prediction``,
+        there's no surrogate id to catch a unique-violation on; the natural
+        key IS the conflict target, so a plain upsert is both the simplest
+        and the correct idempotent write (safe to re-run; a second call for
+        the same (fixture_id, kind) just re-stores the same curated payload).
+        """
+        row = {
+            "fixture_id": fixture_id,
+            "kind": kind,
+            "payload": payload,
+            "source": source,
+        }
+        res = (
+            self._client.table("fixture_insights")
+            .upsert(row, on_conflict="fixture_id,kind")
+            .execute()
+        )
+        return res.data[0]["fixture_id"] if res.data else None
+
     def published_predictions_due(self, now_iso: str) -> list[dict]:
         return self._paginated(
             lambda: self._client.table("predictions")

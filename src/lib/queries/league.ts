@@ -152,3 +152,29 @@ export async function getAllLeagueSlugs(): Promise<string[]> {
     return [];
   }
 }
+
+export interface LeagueOption {
+  name: string;
+  slug: string;
+}
+
+/** Name + slug for every league — used by the v2 premium ledger's league
+ *  filter dropdown (§4). Returns [] on any error so the filter degrades to
+ *  "All leagues" rather than failing the page. */
+export async function getAllLeagueOptions(): Promise<LeagueOption[]> {
+  try {
+    const sb = getSupabaseClient();
+    const rows = await paginate<LeagueOption>(async (from, to) => {
+      const { data, error } = await sb
+        .from('leagues')
+        .select('name, slug')
+        .order('name', { ascending: true })
+        .range(from, to);
+      if (error) return null;
+      return data;
+    });
+    return rows;
+  } catch {
+    return [];
+  }
+}

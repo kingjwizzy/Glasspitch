@@ -216,11 +216,20 @@ test('/match/1 (preview, scored) shows the audit line and "Our call:" phrasing',
 
 // A voided prediction is NEVER presented as our call (§9, §10) — the honesty
 // invariant that makes "Our call:" trustworthy everywhere else it appears.
+//
+// Copy note (v2 hardening): the voided-note copy now covers TWO cases -- a
+// prediction that missed the kickoff lock, OR a fixture cancelled/abandoned
+// after locking (the new `void_cancelled` status) -- so "voided" and
+// "excluded from our scored record" are no longer one contiguous phrase.
+// Asserted as two separate substrings of the same visible text so the test
+// tracks the accurate, expanded copy rather than one exact phrase.
 test('/match/6 (preview, voided) never shows "Our call:" for the excluded prediction', async ({
   page,
 }) => {
   await page.goto('/match/6', { waitUntil: 'load' });
 
-  await expect(page.getByText(/voided and excluded from our scored record/i)).toBeVisible();
+  const voidedNote = page.getByText(/was voided/i);
+  await expect(voidedNote).toBeVisible();
+  await expect(voidedNote).toContainText(/excluded from our scored record/i);
   await expect(page.getByText(/Our call:/)).toHaveCount(0);
 });

@@ -7,11 +7,27 @@
 
 export type FixtureStatus = 'scheduled' | 'live' | 'finished' | 'postponed';
 
+// `void_cancelled` (v2, 2026-07-03): a fixture-level cancellation/abandonment
+// discovered post-lock (distinct from `unlocked_void`, which is a prediction
+// that missed the kickoff lock). Both are non-displayable, excluded-from-the-
+// record statuses — every exclusion filter that already excludes
+// `unlocked_void` must also exclude `void_cancelled` (see homepage.ts,
+// fixtures.ts, match.ts; `ledger.ts`'s `.eq('status','scored')` already
+// structurally excludes both). Requires the corresponding `predictions.status`
+// CHECK constraint to be widened by a backend-jobs migration before a job can
+// ever actually write this value — tracked as a pending coordination item.
 export type PredictionStatus =
   | 'published'
   | 'locked'
   | 'scored'
-  | 'unlocked_void';
+  | 'unlocked_void'
+  | 'void_cancelled';
+
+/** Statuses that must never be presented to a visitor as "our call" (§9, §10). */
+export const VOID_STATUSES: readonly PredictionStatus[] = [
+  'unlocked_void',
+  'void_cancelled',
+];
 
 export type PredictionSource = 'api-football' | 'inhouse-elo';
 
@@ -96,4 +112,59 @@ export interface FixtureWithTeams extends Fixture {
 export interface MatchView extends FixtureWithTeams {
   /** The primary displayed prediction (third-party, labelled — §9), if any. */
   prediction: Prediction | null;
+}
+
+// ── v2 premium tables (ARCHITECTURE.md §7, 2026-07-03 amendment) ───────────
+// Written by the Stripe webhook route (service-role client, the sanctioned
+// billing writer — §5) or, for `profiles`, upserted by the user's own
+// authenticated client on first sign-in. The web app otherwise only ever
+// reads these, same as the football tables (§5 golden rule still holds: no
+// visitor request ever calls a third-party API; the football jobs and the
+// Stripe webhook are the only two writers, and they can never touch each
+// other's tables).
+
+export interface Profile {
+  /** = auth.users.id (uuid). */
+  id: string;
+  created_at: string;
+  is_18_plus: boolean;
+  marketing_opt_in: boolean;
+}
+
+/** Mirrors the Stripe Subscription object's `status` values that matter here. */
+export type SubscriptionStatus =
+  | 'incomplete'
+  | 'incomplete_expired'
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'canceled'
+  | 'unpaid'
+  | 'paused';
+
+export interface Subscription {
+  id: string;
+  user_id: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  status: SubscriptionStatus;
+  price_id: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PremiumPlan = 'monthly' | 'annual';
+
+export type FixtureInsightKind = 'prediction_detail' | 'post_match_stats';
+
+/** Premium depth content — RLS-gated to active subscribers only; never read
+ *  through the anon publishable client (ARCHITECTURE.md §7). */
+export interface FixtureInsight {
+  fixture_id: number;
+  kind: FixtureInsightKind;
+  payload: Record<string, unknown>;
+  source: string;
+  fetched_at: string;
 }

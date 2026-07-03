@@ -12,6 +12,16 @@ fixture (one bad fixture logs + continues; RequestBudgetExceeded ends that
 pass early and gracefully, never crashing the run) and the Elo pass runs for
 every fixture in the window regardless of how the first pass went, since it
 makes no API call and doesn't depend on the request budget.
+
+v2 premium depth content (ARCHITECTURE.md v2 §4/§7): the SAME /predictions
+response already fetched above for the free ledger row also carries richer
+detail (advice, percent breakdown, comparison block, each side's last-5 form,
+a head-to-head summary) that a subscriber can see on a match's insight view.
+That curated subset -- NEVER the full raw payload, and NEVER a second API
+call -- is stored as a `fixture_insights` row (kind='prediction_detail') in
+the SAME run, only when a NEW api-football prediction was just inserted (a
+fixture already skipped as `have_api` was handled -- insight and all -- the
+run it was first fetched, so this never re-fetches or re-derives anything).
 """
 
 from __future__ import annotations
@@ -97,6 +107,95 @@ def parse_api_prediction(payload: dict) -> Optional[ParsedApiPrediction]:
     )
 
 
+# --- v2 premium depth content: curated fixture_insights payload (§4/§7) ------
+# Trimmed, storable subset of the /predictions response -- structured
+# percentages/summaries only, never full match-history dumps (e.g. h2h is
+# summarised to a small "recent meetings" list, not the raw array).
+
+_COMPARISON_KEYS = ("form", "att", "def", "poisson_distribution", "h2h", "goals", "total")
+_LAST_5_KEYS = ("form", "played", "goals")
+
+
+def _curate_winner(winner: Optional[dict]) -> Optional[dict]:
+    if not winner:
+        return None
+    return {"name": winner.get("name"), "comment": winner.get("comment")}
+
+
+def _curate_comparison(comparison: dict) -> dict:
+    return {k: comparison[k] for k in _COMPARISON_KEYS if k in comparison}
+
+
+def _curate_last_5(last_5: Optional[dict]) -> Optional[dict]:
+    if not last_5:
+        return None
+    return {k: last_5[k] for k in _LAST_5_KEYS if k in last_5}
+
+
+def _summarise_h2h(h2h: list, limit: int = 5) -> Optional[dict]:
+    """A small recent-meetings summary -- never the raw match list: the last
+    ``limit`` head-to-head fixtures' scorelines plus the total sample size the
+    API returned."""
+    if not h2h:
+        return None
+    recent = []
+    for item in h2h[:limit]:
+        fixture = item.get("fixture") or {}
+        goals = item.get("goals") or {}
+        teams = item.get("teams") or {}
+        recent.append(
+            {
+                "date": fixture.get("date"),
+                "home": (teams.get("home") or {}).get("name"),
+                "away": (teams.get("away") or {}).get("name"),
+                "home_goals": goals.get("home"),
+                "away_goals": goals.get("away"),
+            }
+        )
+    return {"recent_meetings": recent, "sample_size": len(h2h)}
+
+
+def build_prediction_detail_payload(payload: dict) -> Optional[dict]:
+    """Curate a compact, storable subset of an API-Football /predictions
+    response for a ``fixture_insights`` row (``kind='prediction_detail'``,
+    ARCHITECTURE.md v2 §4/§7) -- the advice line, the win/draw/win percentages,
+    the predicted goals line, the form/attack/defence/poisson comparison
+    block, each side's last-5 summary, and a small head-to-head recap. Never
+    the raw payload. Returns None if there's nothing usable to store (an
+    empty/absent ``response``), mirroring :func:`parse_api_prediction`.
+    """
+    response = (payload or {}).get("response") or []
+    if not response:
+        return None
+    entry = response[0] or {}
+    predictions = entry.get("predictions") or {}
+    teams = entry.get("teams") or {}
+    comparison = entry.get("comparison") or {}
+    h2h = entry.get("h2h") or []
+
+    # Compliance (ARCHITECTURE.md §9/§13): the API's `advice` line is a literal
+    # bet-slip instruction ("Combo Double chance ... -3.5 goals") and
+    # `win_or_draw`/`under_over` are betting-market terms (double chance,
+    # goals line). None of them may be stored, let alone rendered, on a
+    # product whose legal position is "analysis, not betting advice" — so
+    # they are deliberately excluded from the curated payload.
+    curated = {
+        "winner": _curate_winner(predictions.get("winner")),
+        "goals": predictions.get("goals"),
+        "percent": predictions.get("percent"),
+        "comparison": _curate_comparison(comparison),
+        "teams_last_5": {
+            "home": _curate_last_5((teams.get("home") or {}).get("last_5")),
+            "away": _curate_last_5((teams.get("away") or {}).get("last_5")),
+        },
+        "h2h_summary": _summarise_h2h(h2h),
+    }
+    # Drop empty/None leaves so a payload variant missing a whole section
+    # (older fixtures often lack h2h/comparison) doesn't store a shell of nulls.
+    cleaned = {k: v for k, v in curated.items() if v not in (None, {}, [])}
+    return cleaned or None
+
+
 def build_prediction_row(
     *,
     fixture_id: int,
@@ -169,6 +268,7 @@ def run(
         "api_skipped_existing": 0,
         "api_failed": 0,
         "budget_exhausted": False,
+        "insight_inserted": 0,
         "elo_inserted": 0,
         "elo_skipped_existing": 0,
     }
@@ -222,6 +322,11 @@ def run(
             kickoff_utc=fixture["kickoff_utc"],
             now_iso=_stamp(),
         )
+        # Curated depth-content payload from this SAME /predictions response
+        # (never a second fetch) -- premium's fixture_insights row, written
+        # alongside the free ledger row (§4/§7).
+        insight_payload = build_prediction_detail_payload(payload)
+
         if dry_run:
             log.info(
                 "[dry-run] would insert api-football prediction for fixture "
@@ -229,8 +334,27 @@ def run(
                 fixture_id, parsed.prob_home, parsed.prob_draw, parsed.prob_away,
                 parsed.scoreline, parsed.advice,
             )
-        elif store.insert_prediction(row) is not None:
-            counts["api_inserted"] += 1
+            if insight_payload is not None:
+                log.info(
+                    "[dry-run] would insert prediction_detail insight for "
+                    "fixture %s.", fixture_id,
+                )
+        else:
+            inserted_id = store.insert_prediction(row)
+            if inserted_id is not None:
+                counts["api_inserted"] += 1
+                # Only for a freshly-inserted prediction -- a fixture already
+                # skipped via `have_api` above got its insight (if any)
+                # written the run it was FIRST fetched; this never re-writes
+                # or re-fetches it.
+                if insight_payload is not None:
+                    store.insert_insight(
+                        fixture_id=fixture_id,
+                        kind="prediction_detail",
+                        payload=insight_payload,
+                        source=config.THIRD_PARTY_SOURCE,
+                    )
+                    counts["insight_inserted"] += 1
 
     # --- Pass 2: in-house Elo (logged-only — §9). Runs for every fixture in the
     # window regardless of pass 1's outcome: no API call, no budget dependency.

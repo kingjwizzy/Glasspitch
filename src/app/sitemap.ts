@@ -39,6 +39,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly',
       priority: 0.6,
     },
+    // Static legal pages (v2). Everything auth/account/premium-gated is
+    // deliberately NOT listed here — noindexed and out of the sitemap until
+    // the owner flips premium live (ARCHITECTURE.md §13).
+    { url: `${SITE_URL}/privacy`, changeFrequency: 'monthly', priority: 0.3 },
+    { url: `${SITE_URL}/terms`, changeFrequency: 'monthly', priority: 0.3 },
+    { url: `${SITE_URL}/refunds`, changeFrequency: 'monthly', priority: 0.3 },
   ];
 
   const [teamSlugs, leagueSlugs, fixtures] = await Promise.all([

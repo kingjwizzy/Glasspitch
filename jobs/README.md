@@ -22,9 +22,10 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `scoring.py` | Multiclass Brier score + clipped log loss (§10). |
 | `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9). |
 | `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). |
-| `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). |
+| `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. |
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
 | `score_results.py` | **Frequent around match end.** Scores the self-draining `locked` set via `scoring.py` (§8.4, §10). |
+| `fetch_insights.py` | **v2, new (suggested cadence: every 30–60 min).** One `/fixtures/statistics` fetch per finished+scored fixture without a `post_match_stats` insight yet (most-recently-finished first); curates xG/shots/possession/cards/passes per side into `fixture_insights` (migration 0004). Premium depth content — never the free ledger. |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
 
@@ -66,6 +67,16 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   -`scored` prediction whose fixture's final score has since changed — a data
   -provider correction. Re-derives Elo ratings from results on the next
   `fetch_predictions` run.
+- **`fetch_insights`** (v2) — `db.fixtures_needing_stats` returns finished,
+  tracked-league(s)/season fixtures that already have a **scored**
+  api-football prediction but no `post_match_stats` insight yet, ordered
+  most-recently-finished first. For each: `GET /fixtures/statistics?fixture={id}`
+  **exactly once**, curate xG/shots/possession/cards/passes per side (dropping
+  anything not in the curated key map — never a raw provider dump), and
+  `insert_insight` (idempotent upsert keyed on `(fixture_id, kind)`). A
+  fixture with no statistics yet from the provider is skipped and retried next
+  run. Isolated per fixture like `fetch_predictions`' API pass (one bad fixture
+  logs + continues; `RequestBudgetExceeded` ends the run early and gracefully).
 
 ## `--dry-run`
 
@@ -102,12 +113,14 @@ python -m jobs.fetch_fixtures --dry-run
 python -m jobs.fetch_predictions --dry-run
 python -m jobs.lock_predictions --dry-run
 python -m jobs.score_results --dry-run
+python -m jobs.fetch_insights --dry-run
 
 # for real (writes to the DB)
 python -m jobs.fetch_fixtures        # daily
 python -m jobs.fetch_predictions     # daily
 python -m jobs.lock_predictions      # every ~10-15 min
 python -m jobs.score_results         # frequently around match end
+python -m jobs.fetch_insights        # v2 — every ~30-60 min (suggested; not yet in scheduler.yml)
 ```
 
 Add `-v` for debug logging. Writes are idempotent (keyed on the `api_*` ids), so

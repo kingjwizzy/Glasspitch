@@ -29,10 +29,11 @@ class FakeStore:
     # that never thought about the kickoff window still passes unchanged.
     DEFAULT_NOW = "2026-06-11T12:00:00+00:00"
 
-    def __init__(self, *, upcoming=None, finished=None, predictions=None, now=None):
+    def __init__(self, *, upcoming=None, finished=None, predictions=None, insights=None, now=None):
         self._upcoming = list(upcoming or [])
         self._finished = list(finished or [])
         self.predictions = [dict(p) for p in (predictions or [])]
+        self.insights: list[dict] = [dict(i) for i in (insights or [])]
         self._now = util.parse_iso(now) if now else util.parse_iso(self.DEFAULT_NOW)
         # recorded writes
         self.upserted_leagues: list[dict] = []
@@ -74,6 +75,45 @@ class FakeStore:
 
     def existing_prediction_fixture_ids(self, source):
         return {p["fixture_id"] for p in self.predictions if p["source"] == source}
+
+    # ----- v2 premium: fixture_insights (mirrors jobs.db.SupabaseStore) -------
+    def existing_insight_fixture_ids(self, kind):
+        return {i["fixture_id"] for i in self.insights if i["kind"] == kind}
+
+    def fixtures_needing_stats(self, *, api_league_ids, season):
+        """Mirrors jobs.db.SupabaseStore.fixtures_needing_stats: finished
+        fixtures (tracked league(s) + season, wildcard convention -- see
+        module docstring) with a SCORED api-football prediction but no
+        post_match_stats insight yet, most-recently-finished first."""
+        if not api_league_ids:
+            return []
+        default_league = api_league_ids[0]  # wildcard default, see module docstring
+        have_stats = self.existing_insight_fixture_ids("post_match_stats")
+        scored_fixture_ids = {
+            p["fixture_id"]
+            for p in self.predictions
+            if p["source"] == "api-football" and p["status"] == "scored"
+        }
+        candidates = [
+            dict(f)
+            for f in self._finished
+            if f.get("status") == "finished"
+            and f.get("season", season) == season
+            and f.get("api_league_id", default_league) in api_league_ids
+            and f["id"] in scored_fixture_ids
+            and f["id"] not in have_stats
+        ]
+        candidates.sort(key=lambda f: f["kickoff_utc"], reverse=True)
+        return [
+            {
+                "id": f["id"],
+                "api_fixture_id": f["api_fixture_id"],
+                "kickoff_utc": f["kickoff_utc"],
+                "home_team_api_id": f.get("home_team_api_id"),
+                "away_team_api_id": f.get("away_team_api_id"),
+            }
+            for f in candidates
+        ]
 
     def published_predictions_due(self, now_iso):
         now = util.parse_iso(now_iso)
@@ -163,6 +203,21 @@ class FakeStore:
         self.inserted_predictions.append(new)
         return new["id"]
 
+    def insert_insight(self, *, fixture_id, kind, payload, source="api-football"):
+        """Idempotent upsert keyed on (fixture_id, kind) -- mirrors
+        jobs.db.SupabaseStore.insert_insight's real composite-conflict-target
+        upsert: a second call for the same (fixture_id, kind) replaces the
+        stored payload/source rather than erroring or duplicating the row."""
+        for existing in self.insights:
+            if existing["fixture_id"] == fixture_id and existing["kind"] == kind:
+                existing["payload"] = payload
+                existing["source"] = source
+                return fixture_id
+        self.insights.append(
+            {"fixture_id": fixture_id, "kind": kind, "payload": payload, "source": source}
+        )
+        return fixture_id
+
     def mark_locked(self, prediction_id):
         self.locked.append(prediction_id)
         for p in self.predictions:
@@ -229,6 +284,8 @@ class FakeApiClient:
     ``predictions``: {api_fixture_id: payload_or_exception}; a mapped
       Exception instance is raised instead of returned -- per-fixture
       error-isolation tests for fetch_predictions.
+    ``statistics``: {api_fixture_id: payload_or_exception}; same convention as
+      ``predictions`` -- per-fixture error-isolation tests for fetch_insights.
     """
 
     def __init__(
@@ -238,14 +295,17 @@ class FakeApiClient:
         fixtures_pages=None,
         fixtures_by_league=None,
         predictions=None,
+        statistics=None,
     ):
         self._fixtures = fixtures if fixtures is not None else {"response": []}
         self._fixtures_pages = fixtures_pages
         self._fixtures_by_league = fixtures_by_league or {}
         self._predictions = predictions or {}  # api_fixture_id -> payload | Exception
+        self._statistics = statistics or {}  # api_fixture_id -> payload | Exception
         self.request_count = 0
         self.fixture_calls: list[tuple[int, int, int]] = []
         self.prediction_calls: list[int] = []
+        self.statistics_calls: list[int] = []
 
     def get_fixtures(self, league, season, *, page=1):
         self.request_count += 1
@@ -268,6 +328,14 @@ class FakeApiClient:
         self.request_count += 1
         self.prediction_calls.append(fixture)
         entry = self._predictions.get(fixture, {"response": []})
+        if isinstance(entry, BaseException):
+            raise entry
+        return entry
+
+    def get_fixture_statistics(self, fixture):
+        self.request_count += 1
+        self.statistics_calls.append(fixture)
+        entry = self._statistics.get(fixture, {"response": []})
         if isinstance(entry, BaseException):
             raise entry
         return entry
@@ -602,5 +670,110 @@ def predictions_payload():
                 },
                 "teams": {},
             }
+        ]
+    }
+
+
+@pytest.fixture
+def rich_predictions_payload():
+    """A FULLER API-Football /predictions payload than ``predictions_payload``
+    -- also carries win_or_draw/under_over plus the comparison, teams.last_5
+    and h2h sections that build_prediction_detail_payload (v2 premium depth
+    content, jobs/fetch_predictions.py) curates into a fixture_insights row.
+    Used to prove the curation keeps every section when the upstream payload
+    actually has one (predictions_payload proves the opposite: sparse input
+    curates down to a smaller, still-non-None payload with no empty shells
+    for the sections that were genuinely absent)."""
+    return {
+        "response": [
+            {
+                "predictions": {
+                    "winner": {"id": 2380, "name": "Brazil", "comment": "Win or draw"},
+                    "win_or_draw": True,
+                    "under_over": "-2.5",
+                    "goals": {"home": "-1.5", "away": "-1.5"},
+                    "advice": "Double chance : Brazil or draw",
+                    "percent": {"home": "50%", "draw": "30%", "away": "20%"},
+                },
+                "teams": {
+                    "home": {
+                        "last_5": {
+                            "form": "WWDLW",
+                            "played": {"total": 5},
+                            "goals": {"for": {"total": {"total": 9}}},
+                        },
+                    },
+                    "away": {
+                        "last_5": {
+                            "form": "LWDWD",
+                            "played": {"total": 5},
+                            "goals": {"for": {"total": {"total": 6}}},
+                        },
+                    },
+                },
+                "comparison": {
+                    "form": {"home": "60%", "away": "45%"},
+                    "att": {"home": "70%", "away": "55%"},
+                    "def": {"home": "65%", "away": "50%"},
+                    "poisson_distribution": {"home": "45%", "away": "25%"},
+                    "h2h": {"home": "55%", "away": "45%"},
+                    "goals": {"home": "60%", "away": "40%"},
+                    "total": {"home": "58%", "away": "42%"},
+                },
+                "h2h": [
+                    {
+                        "fixture": {"date": "2022-06-01T18:00:00+00:00"},
+                        "teams": {"home": {"name": "Brazil"}, "away": {"name": "Argentina"}},
+                        "goals": {"home": 2, "away": 1},
+                    },
+                    {
+                        "fixture": {"date": "2019-06-01T18:00:00+00:00"},
+                        "teams": {"home": {"name": "Argentina"}, "away": {"name": "Brazil"}},
+                        "goals": {"home": 1, "away": 1},
+                    },
+                ],
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def statistics_payload():
+    """A realistic API-Football /fixtures/statistics payload for two teams
+    (jobs/fetch_insights.py) -- covers every _STAT_KEY_MAP entry plus one
+    UNMAPPED stat type ("Expected goals bucket") that must be dropped, and a
+    percent-string stat that must be converted to a plain float."""
+    return {
+        "response": [
+            {
+                "team": {"id": 2380, "name": "Brazil"},
+                "statistics": [
+                    {"type": "Shots on Goal", "value": 5},
+                    {"type": "Shots off Goal", "value": 3},
+                    {"type": "Total Shots", "value": 10},
+                    {"type": "Blocked Shots", "value": 2},
+                    {"type": "Shots insidebox", "value": 6},
+                    {"type": "Shots outsidebox", "value": 4},
+                    {"type": "Fouls", "value": 8},
+                    {"type": "Corner Kicks", "value": 4},
+                    {"type": "Offsides", "value": 1},
+                    {"type": "Ball Possession", "value": "55%"},
+                    {"type": "Yellow Cards", "value": 2},
+                    {"type": "Red Cards", "value": 0},
+                    {"type": "Goalkeeper Saves", "value": 3},
+                    {"type": "Total passes", "value": 450},
+                    {"type": "Passes accurate", "value": 400},
+                    {"type": "Passes %", "value": "89%"},
+                    {"type": "expected_goals", "value": "1.8"},
+                    {"type": "Expected goals bucket", "value": 99},
+                ],
+            },
+            {
+                "team": {"id": 26, "name": "Argentina"},
+                "statistics": [
+                    {"type": "Ball Possession", "value": "45%"},
+                    {"type": "expected_goals", "value": "1.1"},
+                ],
+            },
         ]
     }

@@ -28,14 +28,24 @@ RPC in a `finally` block, using a season number unique to that test run (see
 `_isolated_season`), so repeated runs against a persistent (non-CI) project
 never accumulate garbage and never collide with concurrent runs.
 
-These tests assume migrations 0001 -> 0003 are ALREADY applied to the target
+These tests assume migrations 0001 -> 0004 are ALREADY applied to the target
 (CI's `supabase db reset` step does this before invoking `pytest -m
 integration`; a developer running this locally runs the same via the Supabase
 CLI). We don't re-apply the migration files ourselves -- instead, every
 0003-introduced object/behaviour (job_runs, 'void_cancelled', the DELETE
-guard, the extended freeze, teardown_season) is exercised directly, so a
-schema that DIDN'T migrate cleanly to 0003 fails these tests immediately
-(table/column/RPC/constraint would not exist) rather than silently no-op'ing.
+guard, the extended freeze, teardown_season) AND every 0004-introduced
+object/behaviour (`profiles`/`subscriptions`/`stripe_events`/
+`fixture_insights`, `handle_new_user()`, `public.is_premium()`, and their RLS)
+is exercised directly, so a schema that DIDN'T migrate cleanly to 0004 fails
+these tests immediately (table/column/function/policy would not exist)
+rather than silently no-op'ing.
+
+v2 premium (0004) additions to this file create REAL `auth.users` rows via the
+service-role client's `auth.admin.create_user()`/`delete_user()` (the local
+stack's GoTrue, started by `supabase start`) so RLS can be exercised as a
+genuinely authenticated user, not just anon vs. service-role -- every such
+test deletes the user(s) it creates in a `finally` block, which cascades
+(`on delete cascade`) through `profiles` and `subscriptions` automatically.
 """
 
 from __future__ import annotations
@@ -327,3 +337,295 @@ def test_anon_role_cannot_write(isolated_season):
                 "season": isolated_season,
             }
         ).execute()
+
+
+# ==============================================================================
+# v2 premium (migration 0004): profiles / subscriptions / stripe_events /
+# fixture_insights, handle_new_user(), public.is_premium(), and their RLS.
+# ==============================================================================
+
+
+def _require_anon_key() -> str:
+    """Shared skip guard for the 0004 tests below -- same reason/env-var list
+    as ``test_anon_role_cannot_write``, factored out because several new tests
+    need the anon/publishable key (either directly, or to sign a real user
+    in)."""
+    anon_key = _resolve_anon_key()
+    if not anon_key:
+        pytest.skip(
+            "No anon/publishable key available -- set SUPABASE_TEST_ANON_KEY, "
+            "SUPABASE_ANON_KEY, or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY to "
+            "exercise this specific assertion. Every other integration test in "
+            "this file still runs without it."
+        )
+    return anon_key
+
+
+def _anon_client_or_skip():
+    url, _key = _TARGET
+    return create_client(url, _require_anon_key())
+
+
+def _new_test_email(label: str) -> str:
+    return f"integration-{label}-{uuid.uuid4().hex}@example.test"
+
+
+def _create_confirmed_user(service_client, *, email: str, password: str) -> str:
+    """Create a REAL, already-confirmed auth.users row via the service-role
+    client's GoTrue admin API -- this is what fires handle_new_user() and
+    therefore auto-creates the matching `profiles` row. Returns the new
+    user's id."""
+    resp = service_client.auth.admin.create_user(
+        {"email": email, "password": password, "email_confirm": True}
+    )
+    return resp.user.id
+
+
+def _signed_in_client(anon_key: str, *, email: str, password: str):
+    """A fresh client, signed in as a real user over the anon/publishable key
+    -- exactly the credential shape the web app itself uses, so the resulting
+    session's `auth.uid()` is genuinely subject to RLS as `authenticated`
+    (not `service_role`, and not the grant-less `anon` role)."""
+    url, _key = _TARGET
+    client = create_client(url, anon_key)
+    client.auth.sign_in_with_password({"email": email, "password": password})
+    return client
+
+
+@requires_real_db
+def test_migration_0004_objects_are_present(real_store):
+    """Proves 0001->0004 applied: profiles/subscriptions/stripe_events/
+    fixture_insights and public.is_premium() didn't exist before this
+    migration -- a schema that didn't migrate cleanly to 0004 fails this (and
+    every other 0004 test in this section) immediately, rather than silently
+    no-op'ing."""
+    result = real_store._client.rpc("is_premium", {"uid": str(uuid.uuid4())}).execute()
+    assert result.data is False  # a random uuid genuinely has no subscription
+
+    for table in ("profiles", "subscriptions", "stripe_events", "fixture_insights"):
+        # service_role bypasses RLS -- this only proves the table/columns exist.
+        real_store._client.table(table).select("*").limit(1).execute()
+
+
+@requires_real_db
+def test_handle_new_user_auto_provisions_a_profile_row(real_store):
+    """The SECURITY DEFINER on_auth_user_created trigger must fire
+    synchronously as part of the auth.users insert -- by the time
+    create_user() returns, the matching profiles row already exists."""
+    email = _new_test_email("auto-profile")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    try:
+        rows = (
+            real_store._client.table("profiles").select("id, is_18_plus").eq("id", user_id).execute().data
+        )
+        assert len(rows) == 1
+        assert rows[0]["is_18_plus"] is False  # default, never auto-attested
+    finally:
+        real_store._client.auth.admin.delete_user(user_id)
+        # Cascade proof: deleting the auth.users row removes the profiles row too.
+        remaining = (
+            real_store._client.table("profiles").select("id").eq("id", user_id).execute().data
+        )
+        assert remaining == []
+
+
+@requires_real_db
+def test_anon_has_zero_access_to_every_billing_and_insights_table(isolated_season):
+    """anon gets NO grant at all (not even SELECT) on any of the four 0004
+    tables -- every one of these must raise (a PostgREST/PostgreSQL
+    permission error), never just return an empty/filtered result set."""
+    anon_client = _anon_client_or_skip()
+
+    for table in ("profiles", "subscriptions", "stripe_events", "fixture_insights"):
+        with pytest.raises(Exception):
+            anon_client.table(table).select("*").execute()
+
+    with pytest.raises(Exception):
+        anon_client.table("profiles").insert(
+            {"id": str(uuid.uuid4()), "is_18_plus": True}
+        ).execute()
+    with pytest.raises(Exception):
+        anon_client.table("subscriptions").insert(
+            {
+                "user_id": str(uuid.uuid4()),
+                "stripe_customer_id": f"cus_anon_test_{isolated_season}",
+                "status": "active",
+            }
+        ).execute()
+    with pytest.raises(Exception):
+        anon_client.table("stripe_events").insert(
+            {"id": f"evt_anon_test_{isolated_season}", "type": "test"}
+        ).execute()
+
+
+@requires_real_db
+def test_authenticated_cannot_write_subscriptions_or_access_stripe_events(real_store):
+    """A genuinely signed-in user: profiles has no INSERT policy/grant at all
+    (only owner SELECT/UPDATE); subscriptions has NO write policy for
+    authenticated whatsoever (writes are service-role/webhook-only); and
+    stripe_events has ZERO authenticated grant, not even SELECT."""
+    anon_key = _require_anon_key()
+
+    email = _new_test_email("billing-writes")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    try:
+        user_client = _signed_in_client(anon_key, email=email, password=password)
+
+        # profiles: no INSERT policy at all (a fresh, unrelated id rules out a
+        # PK-conflict false-positive -- this proves the GRANT is absent, not
+        # merely that inserting over their own row would collide).
+        with pytest.raises(Exception):
+            user_client.table("profiles").insert(
+                {"id": str(uuid.uuid4()), "is_18_plus": True}
+            ).execute()
+
+        # subscriptions: no write policy for authenticated at all.
+        with pytest.raises(Exception):
+            user_client.table("subscriptions").insert(
+                {
+                    "user_id": user_id,
+                    "stripe_customer_id": f"cus_self_test_{user_id}",
+                    "status": "active",
+                }
+            ).execute()
+        with pytest.raises(Exception):
+            user_client.table("subscriptions").update({"status": "canceled"}).eq(
+                "user_id", user_id
+            ).execute()
+
+        # stripe_events: zero grant, not even SELECT.
+        with pytest.raises(Exception):
+            user_client.table("stripe_events").select("id").execute()
+        with pytest.raises(Exception):
+            user_client.table("stripe_events").insert(
+                {"id": f"evt_self_test_{user_id}", "type": "test"}
+            ).execute()
+    finally:
+        real_store._client.auth.admin.delete_user(user_id)
+
+
+@requires_real_db
+def test_is_premium_gates_fixture_insights_by_subscription_status(real_store, isolated_season):
+    """The full matrix requested for this table: anon sees zero rows (denied
+    at the grant level), a signed-in user with NO subscription sees zero rows
+    (RLS-filtered, not denied), and a signed-in user with an ACTIVE
+    subscription sees the row -- proving public.is_premium() and the
+    fixture_insights SELECT policy actually gate on subscription status, not
+    merely on being authenticated."""
+    anon_key = _require_anon_key()
+    url, _key = _TARGET
+    anon_client = create_client(url, anon_key)
+
+    fixture_id, _pred_id = _seed_prediction(
+        real_store, season=isolated_season, status="scored",
+        locked_delta=timedelta(hours=-2),
+    )
+    real_store.insert_insight(
+        fixture_id=fixture_id,
+        kind="prediction_detail",
+        payload={"note": "integration-test payload"},
+        source="api-football",
+    )
+
+    no_sub_email = _new_test_email("no-sub")
+    active_sub_email = _new_test_email("active-sub")
+    password = uuid.uuid4().hex
+    no_sub_id = _create_confirmed_user(real_store._client, email=no_sub_email, password=password)
+    active_sub_id = _create_confirmed_user(
+        real_store._client, email=active_sub_email, password=password
+    )
+    try:
+        # An active subscription, written the only way it's ever legitimately
+        # written -- the service-role client (standing in for the webhook).
+        real_store._client.table("subscriptions").insert(
+            {
+                "user_id": active_sub_id,
+                "stripe_customer_id": f"cus_active_test_{active_sub_id}",
+                "status": "active",
+                "current_period_end": None,
+            }
+        ).execute()
+
+        # anon: denied outright (grant-level), regardless of any row's contents.
+        with pytest.raises(Exception):
+            anon_client.table("fixture_insights").select("*").eq(
+                "fixture_id", fixture_id
+            ).execute()
+
+        # Authenticated, no subscription row at all: RLS filters to zero rows
+        # -- a plain empty result, NOT an exception (the grant IS present).
+        no_sub_client = _signed_in_client(anon_key, email=no_sub_email, password=password)
+        no_sub_rows = (
+            no_sub_client.table("fixture_insights")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .execute()
+            .data
+        )
+        assert no_sub_rows == []
+
+        # Authenticated, with an active subscription: sees exactly the one row.
+        active_sub_client = _signed_in_client(
+            anon_key, email=active_sub_email, password=password
+        )
+        active_sub_rows = (
+            active_sub_client.table("fixture_insights")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .execute()
+            .data
+        )
+        assert len(active_sub_rows) == 1
+        assert active_sub_rows[0]["payload"]["note"] == "integration-test payload"
+    finally:
+        real_store._client.auth.admin.delete_user(no_sub_id)
+        real_store._client.auth.admin.delete_user(active_sub_id)
+        real_store.teardown_season(isolated_season)  # cascades to fixture_insights too
+
+
+@requires_real_db
+def test_is_premium_excludes_a_subscription_past_its_current_period_end(
+    real_store, isolated_season
+):
+    """status='active' alone isn't enough once current_period_end has passed
+    -- public.is_premium() must also check that (or a null period_end, for a
+    subscription with no fixed end)."""
+    anon_key = _require_anon_key()
+
+    fixture_id, _pred_id = _seed_prediction(
+        real_store, season=isolated_season, status="scored",
+        locked_delta=timedelta(hours=-2),
+    )
+    real_store.insert_insight(
+        fixture_id=fixture_id, kind="prediction_detail",
+        payload={"note": "expired-sub test"}, source="api-football",
+    )
+
+    email = _new_test_email("expired-sub")
+    password = uuid.uuid4().hex
+    user_id = _create_confirmed_user(real_store._client, email=email, password=password)
+    try:
+        expired_end = (util.now_utc() - timedelta(days=1)).isoformat()
+        real_store._client.table("subscriptions").insert(
+            {
+                "user_id": user_id,
+                "stripe_customer_id": f"cus_expired_test_{user_id}",
+                "status": "active",
+                "current_period_end": expired_end,
+            }
+        ).execute()
+
+        expired_client = _signed_in_client(anon_key, email=email, password=password)
+        rows = (
+            expired_client.table("fixture_insights")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .execute()
+            .data
+        )
+        assert rows == []
+    finally:
+        real_store._client.auth.admin.delete_user(user_id)
+        real_store.teardown_season(isolated_season)

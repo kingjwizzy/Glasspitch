@@ -3,6 +3,14 @@
 //   supabase gen types typescript --project-id vrcnbvijanpxrqwndnyl > src/lib/database.types.ts
 // The hand-written domain types in ./types.ts remain the canonical contract the
 // UI codes against; this file is the raw row/insert/update shapes for the client.
+//
+// HAND-EXTENDED (2026-07-03, v2): the `profiles`, `subscriptions`,
+// `stripe_events` and `fixture_insights` tables below are added by hand,
+// matching the migration 0004 contract the backend-jobs lane is landing
+// concurrently (ARCHITECTURE.md §7 v2 amendment). The main session regenerates
+// this whole file from the live DB once that migration is applied — at that
+// point this hand-written block should be replaced by the generator's output,
+// not merged with it.
 
 export type Json =
   | string
@@ -216,6 +224,120 @@ export type Database = {
             columns: ["league_id"]
             isOneToOne: false
             referencedRelation: "leagues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      // ── v2 premium tables (hand-extended — see file header note) ──────
+      profiles: {
+        Row: {
+          id: string
+          created_at: string
+          is_18_plus: boolean
+          marketing_opt_in: boolean
+        }
+        Insert: {
+          id: string
+          created_at?: string
+          is_18_plus?: boolean
+          marketing_opt_in?: boolean
+        }
+        Update: {
+          id?: string
+          created_at?: string
+          is_18_plus?: boolean
+          marketing_opt_in?: boolean
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          id: string
+          user_id: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          status: string
+          price_id: string | null
+          current_period_end: string | null
+          cancel_at_period_end: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          status?: string
+          price_id?: string | null
+          current_period_end?: string | null
+          cancel_at_period_end?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          status?: string
+          price_id?: string | null
+          current_period_end?: string | null
+          cancel_at_period_end?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      stripe_events: {
+        Row: {
+          id: string
+          type: string
+          received_at: string
+          payload: Json
+        }
+        Insert: {
+          id: string
+          type: string
+          received_at?: string
+          payload: Json
+        }
+        Update: {
+          id?: string
+          type?: string
+          received_at?: string
+          payload?: Json
+        }
+        Relationships: []
+      }
+      fixture_insights: {
+        Row: {
+          fixture_id: number
+          kind: string
+          payload: Json
+          source: string
+          fetched_at: string
+        }
+        Insert: {
+          fixture_id: number
+          kind: string
+          payload: Json
+          source: string
+          fetched_at?: string
+        }
+        Update: {
+          fixture_id?: number
+          kind?: string
+          payload?: Json
+          source?: string
+          fetched_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixture_insights_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
             referencedColumns: ["id"]
           },
         ]

@@ -2,11 +2,17 @@
 //
 // The secret key bypasses Row Level Security and can write (ARCHITECTURE.md
 // §7). It must NEVER reach the browser bundle (§12): the secret key is a
-// secret. In this product the Python jobs are the canonical writers; this
-// client is reserved for a future sanctioned server-side writer (e.g. the W2
-// Stripe webhook route) — see CLAUDE.md's roster note that widening the "jobs
-// are the only DB writers" invariant needs an explicit ARCHITECTURE.md
-// amendment before anything actually writes through it.
+// secret. The Python jobs remain the only writer of football data; this
+// client is now ALSO used by two v2-amendment-sanctioned server-only callers
+// (ARCHITECTURE.md §0/§5, amended 2026-07-03):
+//   1. src/app/api/stripe/webhook/route.ts — the ONE writer of the billing
+//      tables (`subscriptions`, `stripe_events`), signature-verified.
+//   2. src/app/account/actions.ts's `deleteAccountAction` — self-serve GDPR
+//      account deletion (`auth.admin.deleteUser`), which cascades to
+//      `profiles`/`subscriptions` via FK constraints rather than writing a
+//      billing row directly.
+// No other caller is sanctioned; adding one needs an explicit ARCHITECTURE.md
+// amendment first, per CLAUDE.md's roster note.
 //
 // `import 'server-only'` makes an accidental client-component import a BUILD
 // error rather than only a runtime throw in the visitor's browser (the

@@ -15,6 +15,7 @@ import { cache } from 'react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
+import { VOID_STATUSES } from '@/lib/types';
 import { DISPLAY_SOURCE, one, previewAllowed, withTimeout } from './shared';
 import { previewMatchData } from './match.preview';
 
@@ -246,8 +247,11 @@ async function load(id: number): Promise<MatchData | null> {
 
   // The single displayed model is the third-party one (§9). A voided prediction
   // is never shown as our call — we only note that it was voided (§10).
+  // `unlocked_void` (missed the kickoff lock) and `void_cancelled` (fixture
+  // cancelled/abandoned post-lock) are both non-displayable void states.
   const raw = (fixture.predictions ?? []).find((p) => p.source === DISPLAY_SOURCE) ?? null;
-  const predictionVoided = raw?.status === 'unlocked_void';
+  const predictionVoided =
+    raw !== null && VOID_STATUSES.includes(raw.status as PredictionStatus);
   const prediction = raw && !predictionVoided ? mapPrediction(raw) : null;
 
   // Form is best-effort context — never let it block or fail the page (§5).

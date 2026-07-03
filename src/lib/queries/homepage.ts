@@ -12,6 +12,7 @@ import 'server-only';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
+import { VOID_STATUSES } from '@/lib/types';
 import { favoured } from '@/lib/format';
 import { DISPLAY_SOURCE, one, previewAllowed, withTimeoutOrThrow } from './shared';
 import { previewHomepageData } from './homepage.preview';
@@ -163,11 +164,14 @@ function mapFixture(r: RawFixture): FixtureView {
   const home = one(r.home_team);
   const away = one(r.away_team);
   const league = one(r.league);
-  // Exclude unlocked_void: a prediction published after kickoff is voided for
-  // integrity (§10) and must never be presented to a visitor as our call.
+  // Exclude unlocked_void/void_cancelled: a prediction published after kickoff,
+  // or one whose fixture was cancelled post-lock, is voided for integrity (§10)
+  // and must never be presented to a visitor as our call.
   const pred =
     (r.predictions ?? []).find(
-      (p) => p.source === DISPLAY_SOURCE && p.status !== 'unlocked_void',
+      (p) =>
+        p.source === DISPLAY_SOURCE &&
+        !VOID_STATUSES.includes(p.status as PredictionStatus),
     ) ?? null;
   return {
     id: r.id,

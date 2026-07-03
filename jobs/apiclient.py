@@ -151,3 +151,9 @@ class ApiFootballClient:
 
     def get_predictions(self, fixture: int) -> dict[str, Any]:
         return self.get("/predictions", {"fixture": fixture})
+
+    def get_fixture_statistics(self, fixture: int) -> dict[str, Any]:
+        """GET /fixtures/statistics for one fixture (jobs/fetch_insights.py,
+        ARCHITECTURE.md v2 §4/§7/§8) -- per-team shot/possession/card/xG
+        counters, fetched exactly once per fixture like /predictions."""
+        return self.get("/fixtures/statistics", {"fixture": fixture})

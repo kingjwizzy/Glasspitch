@@ -121,6 +121,117 @@ def test_run_dry_run_writes_nothing_but_still_fetches(
     assert api.request_count == 1  # but the API is still called in dry-run
 
 
+# --- v2 premium depth content: fixture_insights (kind='prediction_detail') --
+# The SAME /predictions response fetched for the free ledger row also curates
+# a fixture_insights row (build_prediction_detail_payload), written only when
+# a NEW api-football prediction was just inserted this run -- never a second
+# API call, never re-written for a fixture skipped as `have_api`.
+
+
+def test_run_inserts_a_curated_prediction_detail_insight_for_a_rich_payload(
+    make_store, make_api, make_fixture, rich_predictions_payload
+):
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9001: rich_predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["insight_inserted"] == 1
+    assert api.request_count == 1  # still only ONE /predictions call -- no extra fetch
+    assert len(store.insights) == 1
+
+    insight = store.insights[0]
+    assert insight["fixture_id"] == 300
+    assert insight["kind"] == "prediction_detail"
+    assert insight["source"] == "api-football"
+
+    payload = insight["payload"]
+    # Compliance regression (ARCHITECTURE.md §9/§13): betting-market fields
+    # from the upstream payload must never reach storage, even though the
+    # raw API fixture above carries all three.
+    assert "advice" not in payload
+    assert "win_or_draw" not in payload
+    assert "under_over" not in payload
+    assert payload["winner"] == {"name": "Brazil", "comment": "Win or draw"}
+    assert payload["percent"] == {"home": "50%", "draw": "30%", "away": "20%"}
+    assert set(payload["comparison"].keys()) == {
+        "form", "att", "def", "poisson_distribution", "h2h", "goals", "total",
+    }
+    assert payload["teams_last_5"]["home"]["form"] == "WWDLW"
+    assert payload["teams_last_5"]["away"]["form"] == "LWDWD"
+    assert payload["h2h_summary"]["sample_size"] == 2
+    assert len(payload["h2h_summary"]["recent_meetings"]) == 2
+    assert payload["h2h_summary"]["recent_meetings"][0]["home_goals"] == 2
+
+
+def test_run_never_writes_an_insight_for_a_fixture_already_holding_an_api_prediction(
+    make_store, make_api, make_fixture, make_prediction, rich_predictions_payload
+):
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    existing = make_prediction(
+        id="existing", fixture_id=300, source="api-football", model_version="api-football-v1"
+    )
+    store = make_store(upcoming=[fixture], predictions=[existing])
+    api = make_api(predictions={9001: rich_predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["api_skipped_existing"] == 1
+    assert counts["insight_inserted"] == 0
+    assert api.prediction_calls == []  # never re-fetched -- never had a payload to curate
+    assert store.insights == []
+
+
+def test_run_never_writes_an_insight_for_an_empty_prediction_response(
+    make_store, make_api, make_fixture
+):
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9001: {"response": []}})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["api_empty"] == 1
+    assert counts["insight_inserted"] == 0
+    assert store.insights == []
+
+
+def test_run_dry_run_never_writes_an_insight_but_still_fetches(
+    make_store, make_api, make_fixture, rich_predictions_payload
+):
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9001: rich_predictions_payload})
+
+    counts = run(dry_run=True, store=store, api=api)
+
+    assert counts["insight_inserted"] == 0
+    assert store.insights == []  # no writes at all in dry-run
+    assert api.request_count == 1  # but the API is still called in dry-run
+
+
+def test_run_curates_a_sparse_payload_without_storing_wholly_empty_sections(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    # predictions_payload (conftest.py) has no comparison/h2h/teams sections at
+    # all -- the curated payload must still be stored (it has winner/percent/
+    # goals), but must not carry "comparison" or "h2h_summary" keys for
+    # sections that were genuinely absent from the upstream response.
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9001: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["insight_inserted"] == 1
+    payload = store.insights[0]["payload"]
+    assert "advice" not in payload
+    assert payload["winner"] == {"name": "Brazil", "comment": "Win or draw"}
+    assert "comparison" not in payload
+    assert "h2h_summary" not in payload
+
+
 def test_run_elo_uses_replayed_ratings(make_store, make_api, make_fixture):
     # One valid finished result (team 200 beat 201, 2-0) plus a finished fixture
     # with NULL goals that must be filtered out by _derived_ratings without

@@ -7,12 +7,13 @@ import 'server-only';
 // The website only ever READS, with the publishable key under read-only RLS, and
 // never calls the football API on the request path (§5 golden rule). Only the
 // third-party `api-football` source is surfaced (§9); the in-house `inhouse-elo`
-// is logged but NEVER shown. Voided predictions (unlocked_void) are excluded for
-// integrity (§10).
+// is logged but NEVER shown. Voided predictions (unlocked_void, void_cancelled)
+// are excluded for integrity (§10).
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
+import { VOID_STATUSES } from '@/lib/types';
 import { favoured } from '@/lib/format';
 import { DISPLAY_SOURCE, one, paginate } from './shared';
 
@@ -30,7 +31,8 @@ export interface FixtureRowView {
   final_home_goals: number | null;
   final_away_goals: number | null;
   /** The third-party displayed prediction, or null when none exists or it was
-   *  voided (unlocked_void). `brier_score` is present once `status='scored'`. */
+   *  voided (unlocked_void / void_cancelled). `brier_score` is present once
+   *  `status='scored'`. */
   prediction: {
     prob_home: number;
     prob_draw: number;
@@ -112,10 +114,13 @@ export function mapFixtureRow(raw: RawFixtureRow): FixtureRowView {
   const away = one(raw.away_team);
   const league = one(raw.league);
 
-  // Exclude unlocked_void (integrity — §10) and the hidden in-house Elo (§9).
+  // Exclude unlocked_void/void_cancelled (integrity — §10) and the hidden
+  // in-house Elo (§9).
   const rawPred =
     (raw.predictions ?? []).find(
-      (p) => p.source === DISPLAY_SOURCE && p.status !== 'unlocked_void',
+      (p) =>
+        p.source === DISPLAY_SOURCE &&
+        !VOID_STATUSES.includes(p.status as PredictionStatus),
     ) ?? null;
 
   const prediction = rawPred

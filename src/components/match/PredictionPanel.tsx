@@ -39,10 +39,11 @@ export default function PredictionPanel({
           <p className="flex items-start gap-2 text-sm text-fg-dim">
             <LockOpenIcon className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              A prediction for this match wasn&rsquo;t locked before kickoff, so
-              it&rsquo;s voided and excluded from our scored record — integrity
-              over coverage. We&rsquo;d rather show a gap than a call we
-              can&rsquo;t stand behind.
+              A prediction for this match was voided — either it wasn&rsquo;t
+              locked before kickoff, or the fixture was cancelled or abandoned
+              after locking — so it&rsquo;s excluded from our scored record:
+              integrity over coverage. We&rsquo;d rather show a gap than a call
+              we can&rsquo;t stand behind.
             </span>
           </p>
         </div>

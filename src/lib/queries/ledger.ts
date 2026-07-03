@@ -9,16 +9,19 @@ import 'server-only';
 // request path (§5 golden rule); the two layers meet only at the database.
 //
 // Only rows that are `status = 'scored'` AND `source = 'api-football'` count:
-// `unlocked_void` is excluded for integrity (§10) and the in-house `inhouse-elo`
+// `unlocked_void` and `void_cancelled` are excluded for integrity (§10) by the
+// very fact that neither is ever `scored`, and the in-house `inhouse-elo`
 // model is logged but NEVER displayed (§9). The per-row `brier_score` / `log_loss`
 // are read straight from the columns the scoring job persisted — the website does
 // not recompute them; it only means them and buckets the probabilities.
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { MIN_SEASON } from '@/lib/constants';
+import type { Database } from '@/lib/database.types';
 import type { MatchResult } from '@/lib/types';
 import { predictedPick } from '@/lib/format';
-import { DISPLAY_SOURCE, one, previewAllowed, withTimeoutOrThrow } from './shared';
+import { DISPLAY_SOURCE, one, paginate, previewAllowed, withTimeoutOrThrow } from './shared';
 import { previewLedgerRows } from './ledger.preview';
 
 export { DISPLAY_SOURCE };
@@ -34,6 +37,8 @@ export interface LedgerRowView {
   id: string;
   fixtureId: number;
   league: string;
+  /** League slug — used by the v2 premium ledger's league filter (§4). */
+  leagueSlug: string;
   home: string;
   away: string;
   kickoffUtc: string;
@@ -111,6 +116,7 @@ interface RawTeam {
 }
 interface RawLeague {
   name: string;
+  slug: string;
   season: number;
 }
 interface RawLedgerFixture {
@@ -151,7 +157,7 @@ const SCORED_SELECT = `
     kickoff_utc,
     home_team:teams!fixtures_home_team_id_fkey(name),
     away_team:teams!fixtures_away_team_id_fkey(name),
-    league:leagues!fixtures_league_id_fkey!inner(name, season)
+    league:leagues!fixtures_league_id_fkey!inner(name, slug, season)
   )
 `;
 
@@ -167,6 +173,7 @@ function mapRow(r: RawLedgerRow): LedgerRowView {
     id: r.id,
     fixtureId: fx?.id ?? 0,
     league: league?.name ?? '',
+    leagueSlug: league?.slug ?? '',
     home: home?.name ?? 'Home',
     away: away?.name ?? 'Away',
     kickoffUtc: fx?.kickoff_utc ?? '',
@@ -340,4 +347,52 @@ export async function getLedgerData(): Promise<LedgerData> {
   }
 
   return withTimeoutOrThrow(load(), 6000);
+}
+
+// ── v2 premium: filtered + fully-paginated ledger reads ─────────────────────
+// Used by /premium/ledger (league/result filters) and the CSV export route
+// (ARCHITECTURE.md §4). This is NOT a premium DB gate — the underlying rows
+// are the same free-forever ledger every visitor can already read on /ledger
+// (§4 locked decision); what's premium is the filter UI and the bulk CSV
+// export convenience, gated in the calling route via getViewer(), not RLS.
+// Unlike getLedgerData()'s single bounded (limit 5000) select, this pages
+// through EVERY scored row via `paginate()` so a genuinely complete CSV export
+// can never silently truncate as the ledger grows past that bound.
+
+export interface LedgerFilters {
+  /** League slug, or omitted/undefined for every league. */
+  league?: string;
+  /** Match result, or omitted/undefined for every result. */
+  result?: MatchResult;
+}
+
+export async function getFullLedgerRows(
+  supabase: SupabaseClient<Database>,
+  filters: LedgerFilters = {},
+): Promise<LedgerRowView[]> {
+  const rows = await paginate<RawLedgerRow>(async (from, to) => {
+    let query = supabase
+      .from('predictions')
+      .select(SCORED_SELECT)
+      .eq('source', DISPLAY_SOURCE)
+      .eq('status', 'scored')
+      .not('brier_score', 'is', null)
+      .not('log_loss', 'is', null)
+      .not('result', 'is', null)
+      .gte('fixture.league.season', MIN_SEASON)
+      .order('scored_at', { ascending: false })
+      .range(from, to);
+
+    if (filters.result) query = query.eq('result', filters.result);
+    if (filters.league) query = query.eq('fixture.league.slug', filters.league);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('getFullLedgerRows: read failed', error.message);
+      return null;
+    }
+    return data as unknown as RawLedgerRow[];
+  });
+
+  return rows.map(mapRow);
 }
