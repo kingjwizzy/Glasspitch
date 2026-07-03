@@ -69,6 +69,7 @@ on:
           - all
           - fetch_fixtures
           - fetch_predictions
+          - fetch_insights
           - lock_predictions
           - score_results
           - keepalive
@@ -84,12 +85,13 @@ on:
   # "Run workflow" button above. Each cron string is unique and maps to exactly
   # one job through that job's `if:` guard (github.event.schedule == '<cron>').
   # Do NOT change the cron strings without updating the matching `if:` guards.
-  # schedule:
-  #   - cron: '0 */6 * * *'    # fetch_fixtures     — every 6h
-  #   - cron: '15 6 * * *'     # fetch_predictions  — daily 06:15 UTC
-  #   - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
-  #   - cron: '*/20 * * * *'   # score_results      — every 20 min
-  #   - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
+  schedule:
+    - cron: '0 */6 * * *'    # fetch_fixtures     — every 6h
+    - cron: '15 6 * * *'     # fetch_predictions  — daily 06:15 UTC
+    - cron: '45 */6 * * *'   # fetch_insights     — every 6h at :45 (post-match stats, after score_results)
+    - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
+    - cron: '*/20 * * * *'   # score_results      — every 20 min
+    - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
 
 # Least privilege: the jobs only read the checked-out repo and talk to Supabase /
 # the football API over the network. They never write back to the repo (the
@@ -184,6 +186,53 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_NAME: fetch_predictions
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- every 6h: post-match stats insights (premium depth content) --------
+  fetch_insights:
+    name: fetch_insights (post-match stats, once per fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: glasspitch-scheduler-fetch_insights
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_insights')) ||
+      github.event.schedule == '45 */6 * * *'
+    permissions:
+      contents: read
+      issues: write
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run fetch_insights
+        run: python -m jobs.fetch_insights ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: fetch_insights
         run: |
           set -euo pipefail
           TITLE="[scheduler] ${JOB_NAME} failed"
