@@ -74,7 +74,7 @@ export default function TermsPage() {
           Subscriptions
         </h2>
         <p className="text-sm leading-relaxed text-fg-dim">
-          Glass Pitch Premium is £4/month or £29/year, billed by our payment
+          Glass Pitch Premium is £6/month or £39/year, billed by our payment
           processor, Stripe, and renews automatically until you cancel.
           Cancel any time from your account&rsquo;s billing portal — cancelling
           is exactly as easy as subscribing, and you keep access until the end

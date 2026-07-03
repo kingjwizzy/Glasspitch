@@ -77,7 +77,7 @@ export default async function MatchInsightsPage({ params }: InsightsPageProps) {
         <div className="rounded-2xl border border-line bg-surface p-5">
           <p className="text-sm leading-relaxed text-fg-dim">
             Prediction detail and post-match stats for this fixture are part of
-            Glass Pitch Premium — £4/month or £29/year. The full ledger and
+            Glass Pitch Premium — £6/month or £39/year. The full ledger and
             every match&rsquo;s probabilities stay free forever either way.{' '}
             <Link href="/premium" className="text-green underline transition-colors hover:text-green-bright">
               See what&rsquo;s included

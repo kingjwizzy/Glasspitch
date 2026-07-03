@@ -51,7 +51,7 @@ test('the footer links to /privacy, /terms, and /refunds from the home page', as
 
 test('/terms names the £4/month and £29/year pricing and links to /refunds', async ({ page }) => {
   await page.goto('/terms', { waitUntil: 'load' });
-  await expect(page.getByText('£4/month or £29/year')).toBeVisible();
+  await expect(page.getByText('£6/month or £39/year')).toBeVisible();
   // Scoped to the article body -- the footer ALSO has a "Refunds" link, and
   // Playwright's accessible-name matching is case-insensitive by default, so
   // an unscoped locator would resolve to both.

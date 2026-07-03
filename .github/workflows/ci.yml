@@ -35,6 +35,7 @@ jobs:
       ALLOW_PREVIEW: '1'
       PREVIEW_HOMEPAGE: '1'
       PREVIEW_LEDGER: '1'
+      PREVIEW_MATCHES: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -43,9 +43,9 @@ test('/premium states both locked prices plainly', async ({ page }) => {
   // The two Checkout buttons ARE the page's one quiet upgrade affordance
   // (DESIGN.md §6: no more than one per page) -- both prices stated plainly,
   // no "starting from", no hidden/asterisked fees.
-  await expect(page.getByRole('button', { name: /£4/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /£6/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /per month/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /£29/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /£39/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /per year/ })).toBeVisible();
 });
 
