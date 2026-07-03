@@ -1,147 +1,111 @@
 # STATUS — Glass Pitch
 
 **Last updated:** 2026-07-03
-**Overall state:** **v1 is feature-complete and fully merged to `main`.** Every planned
-page is built and reading real data from Supabase (home, `/match/[id]`, `/team/[slug]`,
-`/league/[slug]`, `/ledger`, `/about`, `/responsible-gambling`), the four-job pipeline and
-schema are done, and the SEO pass has landed. What remains is **not building** — it is the
-launch gate: a **paid API plan + the live-2026 cutover**, **responsible-gambling / legal
-sign-off**, **turning the scheduler cron on**, plus test-hardening and minor polish.
+**Overall state:** **v2 is LIVE at https://glasspitch.com.** The site is public,
+reading the real FIFA World Cup 2026 knockouts from Supabase, with the full
+hardening pass and the premium stack shipped. Premium runs in **Stripe test
+mode** — gated routes are built, noindexed, and unlinked from the public nav
+until the owner's launch gate below clears. The scheduler cron is **on**
+(GitHub Actions, repo now public → unlimited minutes).
 
-> Snapshot reflects the **code on `main`** at `9ac292b` (Merge `feat/seo-polish`). All four
-> former feature branches (`feat/scheduler`, `feat/home-page`, `feat/ledger-page`,
-> `feat/team-league-pages`) and the SEO polish are **merged** — the "unmerged branches" and
-> "Next up: ledger / team / league" sections of the previous snapshot are now **done**.
-> Source-of-truth specs: `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/SEEDING.md`, `CLAUDE.md`.
+> Snapshot reflects `main` after the `feat/v2-launch` merge (v2 go-live,
+> 2026-07-03). Source-of-truth specs: `docs/ARCHITECTURE.md` (carrying the
+> 2026-07-03 v2 amendments), `docs/DESIGN.md`, `docs/SEEDING.md`, `CLAUDE.md`.
 
 ---
 
-## ✅ Done — built & merged on `main`
+## ✅ Live production state (2026-07-03)
 
-**Foundations & schema**
-- DESIGN.md token system + global chrome (dark-first, colour-blind-safe data palette), the
-  site-wide compliance disclaimer as a named landmark, header/footer.
-- Supabase schema: `leagues` / `teams` / `fixtures` / `predictions` ledger, the kickoff
-  **immutability trigger** (freezes `prob_*`/`predicted_*`/`model_version`/`source`/`published_at`
-  + `locked_at`/`id`/`fixture_id`/`created_at` once `locked_at <= now()`), `prob_*` sum CHECK,
-  and **RLS** (anon/authenticated select-only; service role the only writer). A second migration
-  hardens both trigger functions with an empty `search_path`.
-- Publishable (anon, RLS-bound) vs secret (service, bypasses RLS) key boundary; `supabaseAdmin`
-  is server-only and guarded — never reachable from a client/RSC path.
-
-**Jobs pipeline** — all four jobs + shared infra complete, **zero stubs**
-- `fetch_fixtures`, `fetch_predictions` (third-party fetched **once ever** per fixture + a
-  logged-only Elo), `lock_predictions` (kickoff lock; late → `unlocked_void`), `score_results`
-  (Brier + log loss). Scoring maths verified **character-for-character** against §10.
-- `apiclient` (auth, retry/backoff, per-run `MAX_REQUESTS_PER_RUN` budget guard), `db`
-  (idempotent upserts keyed on `api_*` ids; UNIQUE-violation-only swallow), `elo`, `scoring`,
-  `config` (`LIVE_SEASON` single source of truth), `util`, `cli`.
-- All writes idempotent; jobs safe to re-run/overlap.
-
-**Web pages** — every route built, all dynamic routes read real Supabase data (ISR, zero client JS)
-- **`/`** — matchday home: hero, upcoming, "what we're watching", recent calls (✓/✗), record band.
-- **`/match/[id]`** — on-demand ISR: one fixture + its locked `api-football` prediction, recent
-  form, honest scored-result panel (actual vs predicted, Brier + log loss, misses shown plainly),
-  and void / no-prediction / 404 states. Per-match metadata + `SportsEvent` JSON-LD.
-- **`/team/[slug]`** & **`/league/[slug]`** — header, form, upcoming + recent fixtures, record
-  stats; known slugs pre-rendered, unknown fall to on-demand ISR + honest 404s.
-- **`/ledger`** — the trust engine: running record incl. losses, mean Brier + log loss,
-  calibration table (10 deciles), every scored call newest-first, sample-size note.
-- **`/about`** (static) and **`/responsible-gambling`** (static; links are still placeholders — see below).
-- **SEO:** per-page OpenGraph, branded home title, cross-linked team names, `robots.ts`,
-  `sitemap.ts` (static pages + team/league slugs).
-- Elo and voided predictions are **never** surfaced; only `source='api-football'` is shown.
-
-**Scheduler** — *`.github/workflows/scheduler.yml`*
-- GitHub Actions jobs scheduler: cadence documented (fetch_fixtures 6h, fetch_predictions daily,
-  lock 10m, score 20m), **cron commented out** (manual `workflow_dispatch` only until go-live),
-  `permissions: contents: read`, per-job concurrency groups; DB-only jobs carry **no**
-  `API_FOOTBALL_KEY`.
-
-**Dev tooling & tests**
-- `seed_predictions_dev` (back-dates dev predictions onto finished 2022 fixtures so the real
-  lock/score jobs process them) and `reset_season` (FK-safe, season-scoped teardown), both with
-  live-season interlocks; `docs/SEEDING.md` runbook.
-- **106 pytest** tests (mocked — no network, no DB) covering apiclient / scoring / elo / util /
-  all four jobs + both dev tools. **e2e:** Playwright + axe on the static pages (`/`, `/about`,
-  `/ledger`, `/responsible-gambling`) at phone + desktop viewports, 0 serious/critical axe.
+- **Site:** https://glasspitch.com (+ www) on Vercel, project `glasspitch`
+  (team `venture2`), custom domain verified, all public routes static/ISR.
+- **Data:** WC 2026 (league 1, season 2026) — 94 fixtures, 48 teams live;
+  the 2022 dev seed was torn down via `teardown_season()` before the cutover.
+- **The ledger is live:** first real predictions published for the Round-of-16
+  window (7 fixtures within the 72h fetch window at cutover), locking at their
+  kickoffs — the first at 2026-07-03 18:00 UTC (Australia v Egypt). Elo logged
+  silently alongside; `prediction_detail` insights stored for premium.
+- **DB:** migrations 0001→0004 applied live. Grant-layer read-only for
+  anon/authenticated, ledger DELETE guard + scored-row freeze, `job_runs`
+  observability, premium tables (profiles/subscriptions/stripe_events/
+  fixture_insights) with subscriber-only RLS via `is_premium()`. Security
+  advisor: zero warnings (two deliberate INFO notes on deny-all tables).
+- **Scheduler:** all six crons enabled — fetch_fixtures 6h, fetch_predictions
+  daily 06:15, fetch_insights 6h@:45, lock 10m, score 20m, keepalive monthly.
+  Per-job failure alerting opens/reuses a GitHub issue; every run writes a
+  `job_runs` row.
+- **Stripe (test mode):** product `glasspitch-premium` (£4/mo, £29/yr),
+  webhook endpoint live at `/api/stripe/webhook` (signature-verified,
+  idempotent, retry-on-failure semantics).
+- **Tests:** 169 pytest + 11 integration (real Postgres in CI) + 116
+  Playwright/axe. Gate review (checks-reviewer): PASS; its three warnings
+  (auth open-redirect, webhook silent-drop, double-chance phrasing in stored
+  insights) were fixed pre-launch.
 
 ---
 
-## 🚦 Launch gate — the critical path (mostly non-code)
+## 🚦 Owner launch gate — premium live-mode flip
 
-1. **Live-2026 cutover** — gated on buying a **paid API-Football plan** (the free tier can't read
-   season 2026). Plug-and-play per `docs/SEEDING.md`: new key, drop the `WC_*` env overrides
-   (reverts to 2026 / league 1), **`reset_season --season 2022` first** (the `leagues.api_league_id`
-   UNIQUE means seeding 2026 onto the old row would orphan 2022), then run the live pipeline.
-   **No code edit.**
-2. **Responsible-gambling + legal sign-off** — `/responsible-gambling` ships placeholder
-   ("to be confirmed") support links and the disclaimer copy is developer-authored; both need
-   **real resource links + compliance sign-off before public launch or monetisation**.
-3. **Enable the scheduler** — uncomment the `schedule:` + four `- cron:` lines in `scheduler.yml`
-   at go-live (each cron maps 1:1 to a job via its `if:` guard).
+Premium stays in test mode until ALL of these clear (ARCHITECTURE.md §13):
 
----
+1. **Stripe restricted-business vetting** — "sports forecasting" is on
+   Stripe's restricted list; get their written OK (position: statistics/
+   analysis, no odds, no tips, losses published — the ledger is the exhibit).
+2. **Professional legal sign-off** — the disclaimer copy, `/privacy`,
+   `/terms`, `/refunds` drafts (all live, each footnoted "draft pending
+   professional review"), and the no-Gambling-Commission-licence confirmation.
+3. **Eyeball the responsible-gambling resources** — live at
+   `/responsible-gambling`: National Gambling Helpline 0808 8020 133
+   (verified on gamcare.org.uk at build time), GAMSTOP, GambleAware.
+4. **ICO registration** before promoting sign-ups (accounts hold email +
+   billing metadata once real users exist).
+5. **Supabase Auth config (dashboard):** allow-list
+   `https://glasspitch.com/auth/callback` and `/auth/confirm` as redirect
+   URLs; add a production SMTP provider (Resend/Postmark) before real
+   sign-up volume. Until then magic-link auth works only at Supabase's
+   built-in trickle rate — fine for owner testing.
+6. Flip: swap Stripe test keys → live keys in Vercel env, link the auth
+   affordance into the nav, remove the noindex on `/premium`.
 
-## 🟡 Close before the live cutover
+## 🟡 Known post-launch items
 
-- **Harden the dev seeder** — `seed_predictions_dev` gates on config identity
-  (`SEASON == LIVE_SEASON`) but its write set (`finished_fixtures_ordered()`) is **not
-  season-scoped**, unlike `reset_season`. Harmless today (single-season-per-DB, no live 2026 data),
-  but scope the reader to `config.SEASON` so it physically cannot back-date predictions onto
-  another season's fixtures once a mixed/live DB exists.
+- **Vercel GitHub app not connected** (`vercel git connect` needs the app
+  install — one click by the owner). Until then deploys are CLI-driven
+  (`npx vercel deploy --prod`); pushes do NOT auto-deploy.
+- **Sentry** (web + jobs DSNs) still unwired — pipeline failure alerting
+  exists via GitHub issues + `job_runs`; error monitoring on the web layer is
+  the gap. Vercel Web Analytics can be enabled in the dashboard (cookieless).
+- `middleware.ts` → `proxy` rename (Next 16 deprecation warning, non-blocking).
+- Local `jobs/.venv` runs Python 3.14 vs CI's pinned 3.12 (rebuild for parity).
+- `src/lib/database.types.ts` deliberately omits jobs-only objects
+  (`job_runs`, `is_premium`, `teardown_season`) — web never touches them.
+- Club-football scale work (multi-league schema: `UNIQUE(api_league_id,
+  season)`, team slug collisions, provider seam for football-data.org) is
+  designed in the audit but deferred until after the World Cup.
 
----
+## 🔭 Deferred (unchanged)
 
-## 🧪 Test-hardening (feasible now, not merge-blocking)
-
-- **`/match` · `/team` · `/league` e2e + axe** — the three DB-backed pages have no specs yet;
-  doable now via the `PREVIEW_*` server-only hatch (renders populated states with no seeded DB).
-  Only the static pages currently have specs.
-- **Real-store integration tests** — no test runs against real Postgres; upsert idempotency, the
-  immutability trigger, and the `prob_*` sum CHECK are asserted only against fakes.
-
----
-
-## 🧹 Minor polish / hygiene
-
-- **Default OG image** — `src/app/layout.tsx` still has a `TODO` for `app/opengraph-image.tsx`.
-- **Per-match sitemap URLs** — `src/app/sitemap.ts` covers static + team/league slugs; per-match
-  URLs are a documented `TODO` (needs the fixtures-id enumerator).
-- **`fetch_fixtures` pagination** — before any multi-page fixture list (club football).
-- **Sentry + analytics** (Plausible / GA4) on web + jobs.
-- **Cleanups:** `scheduler.yml` budget comment is arithmetic'd on the old 64-match format
-  (2026 = 104 matches / ~72 worst-case fetches — still < 100/day, conclusion holds);
-  `db.finished_fixtures()` (unordered) is dead code; `score_results` re-queries every finished
-  fixture each run (N+1, fine at WC scale); `ScoredResult`'s ledger link lacks the `min-h-11`
-  tap-target; `PREVIEW_*` env vars aren't in `.env.local.example`.
-
----
-
-## 🔭 v2 — deferred, not started (infra reserved)
-
-- User accounts / logins / personal data.
-- Premium paywall + ads (the `tier` field and reserved ad slots exist but are **off**).
-- xG breakdowns, ledger filters / CSV export, editorial content, email capture,
-  "Beat the model" game, promoting the in-house Elo to primary (decided by the ledger).
+- Email capture/newsletter; "Beat the model" game (DESIGN.md §6 reserve);
+  Golden Boot race + PWA manifest (DESIGN.md home-spec extras); editorial
+  content; promoting the in-house Elo (decided by the ledger, §9/§16).
 
 ---
 
 ## 🔑 Key facts (operational truths for a new session)
 
-- **Stack:** Next.js App Router (RSC/ISR) + Tailwind on Vercel; Supabase Postgres; Python
-  scheduled jobs; GitHub Actions schedules the jobs. The two layers meet **only at the database**.
-- **The golden rule (§5):** the website only ever **reads** from Supabase; the **jobs are the only
-  DB writers and the only football-API callers**. No visitor request ever calls the football API.
-- **Key boundary (§7/§12):** web uses the **publishable** key (`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
-  anon, RLS read-only); jobs use the **secret/service** key (`SUPABASE_SECRET_KEY`, server-only,
-  bypasses RLS). `supabaseAdmin` is guarded and never client-reachable. No secret is committed;
-  `.env*` is gitignored (only `*.example` tracked). Real secrets live only in local gitignored
-  `.env.local` / `jobs/.env`.
-- **2022 = disposable DEV data** (`season=2022`). The real, locked-before-kickoff public record
-  starts only on genuine **future 2026 fixtures** (paid plan). **Never present 2022 as the live
-  record.** Only `source='api-football'` is shown; the in-house `inhouse-elo` is logged, never displayed.
-- **`LIVE_SEASON`** is the single source of truth in `jobs/config.py`; `WC_SEASON` / `WC_LEAGUE_ID`
-  env vars override it for a dev seed (default 2026 / league 1).
-- **GitHub is the source of truth.** **Lane discipline:** `src/` (frontend) and `jobs/` +
-  `supabase/migrations/` (backend) are disjoint ownership.
+- **Golden rule (§5, amended 2026-07-03):** the website only ever reads from
+  Supabase; the Python jobs are the only football-data writers and the only
+  football-API callers; the **Stripe webhook route is the only billing-data
+  writer**. No visitor request ever calls the football API.
+- **Premium gates depth content only** — the full prediction set and the
+  complete scored ledger stay free forever. `predictions.tier` is not the
+  gating mechanism; premium data lives in `fixture_insights` behind
+  subscriber-only RLS.
+- **Key boundary:** web uses the publishable key (RLS read-only);
+  jobs + the webhook writer use the secret key (server-only). Vercel prod
+  env carries 9 vars incl. Stripe test keys; GitHub Actions carries
+  SUPABASE_URL / SUPABASE_SECRET_KEY / API_FOOTBALL_KEY.
+- **API-Football:** Pro plan (7,500 req/day, renews monthly). `/fixtures`
+  rejects an explicit `page` param — page 1 omits it (fixed live 2026-07-03).
+- **The public record starts 2026-07-03.** Never present anything earlier as
+  the live record; web reads are season-floored via NEXT_PUBLIC_MIN_SEASON
+  (default 2026) as defence in depth.
