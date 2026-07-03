@@ -146,8 +146,20 @@ class ApiFootballClient:
         must loop while ``paging.current < paging.total``, incrementing
         ``page`` (jobs/fetch_fixtures.py). Each page is a separate request and
         counts against the per-run budget like any other call.
+
+        The first page is requested WITHOUT a ``page`` param: /fixtures
+        rejects an explicit ``page`` field outright ("The Page field do not
+        exist" — verified live 2026-07-03, WC 2026 cutover) even though its
+        responses carry a ``paging`` block. Only follow-up pages (which no
+        /fixtures response has produced in practice — paging is always 1/1)
+        send it, so a hypothetical multi-page response still gets attempted
+        rather than silently truncated, and the per-league error isolation in
+        fetch_fixtures contains the fallout if the API rejects that too.
         """
-        return self.get("/fixtures", {"league": league, "season": season, "page": page})
+        params: dict[str, Any] = {"league": league, "season": season}
+        if page > 1:
+            params["page"] = page
+        return self.get("/fixtures", params)
 
     def get_predictions(self, fixture: int) -> dict[str, Any]:
         return self.get("/predictions", {"fixture": fixture})

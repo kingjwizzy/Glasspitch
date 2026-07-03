@@ -109,11 +109,21 @@ def test_get_fixtures_passes_the_page_param():
     assert session.calls[0]["params"] == {"league": 1, "season": 2026, "page": 3}
 
 
-def test_get_fixtures_defaults_to_page_one():
-    session = FakeSession([FakeResponse(200, {"response": [], "errors": []})])
+def test_get_fixtures_first_page_omits_the_page_param():
+    # /fixtures rejects an explicit `page` field ("The Page field do not
+    # exist" — verified live, 2026-07-03 WC cutover), so the first request
+    # must not send it; only follow-up pages (paging.total > 1) do.
+    session = FakeSession(
+        [
+            FakeResponse(200, {"response": [], "errors": []}),
+            FakeResponse(200, {"response": [], "errors": []}),
+        ]
+    )
     client = _client(session)
     client.get_fixtures(1, 2026)
-    assert session.calls[0]["params"] == {"league": 1, "season": 2026, "page": 1}
+    assert session.calls[0]["params"] == {"league": 1, "season": 2026}
+    client.get_fixtures(1, 2026, page=2)
+    assert session.calls[1]["params"] == {"league": 1, "season": 2026, "page": 2}
 
 
 def test_extra_headers_are_merged():
