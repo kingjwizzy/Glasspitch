@@ -54,3 +54,4 @@ yarn-error.log*
 
 # --- local scratch / preview artifacts (never committed) ---
 .scratch/
+.env*
