@@ -166,7 +166,10 @@ max_indexes = 5
 # [storage.vector.buckets.documents-openai]
 
 [auth]
-enabled = false
+# Enabled: the 0004 integration tests create real auth.users rows (via the
+# service-role admin API) to exercise handle_new_user()/is_premium() RLS, and
+# the CLI omits the anon/service keys from `status` output when auth is off.
+enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
 site_url = "http://127.0.0.1:3000"

@@ -108,6 +108,13 @@ jobs:
           supabase status -o json > /tmp/supabase-status.json
           URL=$(jq -r '.API_URL // .api_url // empty' /tmp/supabase-status.json)
           KEY=$(jq -r '.SERVICE_ROLE_KEY // .service_role_key // .SECRET_KEY // .secret_key // empty' /tmp/supabase-status.json)
+          if [ -z "$KEY" ]; then
+            # Some CLI releases omit keys from the JSON output entirely —
+            # fall back to the human-readable status text, tolerating both
+            # the legacy ("service_role key: eyJ...") and new
+            # ("Secret key: sb_secret_...") label formats.
+            KEY=$(supabase status 2>/dev/null | grep -iE '(service_role key|secret key):' | head -1 | awk '{print $NF}')
+          fi
           if [ -z "$URL" ] || [ -z "$KEY" ]; then
             echo "::error::Could not extract URL/secret key from supabase status. Available fields:"
             jq 'keys' /tmp/supabase-status.json
