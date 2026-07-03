@@ -98,11 +98,24 @@ jobs:
           supabase start
           supabase db reset
       - name: Export the local stack's connection details for SupabaseStore
+        # Field names vary across Supabase CLI releases (SERVICE_ROLE_KEY ->
+        # SECRET_KEY -> sb_secret_* era) — verified live 2026-07-03 when
+        # `.SERVICE_ROLE_KEY` came back missing and jq's literal "null"
+        # reached PostgREST as a one-part JWT. Try every known name, prefer
+        # the JWT-style service key, and fail HERE with the actual field
+        # names (never values) rather than later with a cryptic auth error.
         run: |
           supabase status -o json > /tmp/supabase-status.json
+          URL=$(jq -r '.API_URL // .api_url // empty' /tmp/supabase-status.json)
+          KEY=$(jq -r '.SERVICE_ROLE_KEY // .service_role_key // .SECRET_KEY // .secret_key // empty' /tmp/supabase-status.json)
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::Could not extract URL/secret key from supabase status. Available fields:"
+            jq 'keys' /tmp/supabase-status.json
+            exit 1
+          fi
           {
-            echo "SUPABASE_URL=$(jq -r '.API_URL' /tmp/supabase-status.json)"
-            echo "SUPABASE_SECRET_KEY=$(jq -r '.SERVICE_ROLE_KEY' /tmp/supabase-status.json)"
+            echo "SUPABASE_URL=$URL"
+            echo "SUPABASE_SECRET_KEY=$KEY"
           } >> "$GITHUB_ENV"
       # -m integration selects ONLY tests marked @pytest.mark.integration
       # (pytest.ini's addopts excludes them from the default run above) —
