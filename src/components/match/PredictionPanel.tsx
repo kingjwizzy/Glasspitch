@@ -1,5 +1,6 @@
 import ProbabilityBar from '@/components/ProbabilityBar';
 import LockStatusLine from '@/components/LockStatusLine';
+import AuditLine from '@/components/match/AuditLine';
 import { LockOpenIcon } from '@/components/icons';
 import { scoreLine } from '@/lib/format';
 import { THIRD_PARTY_LABEL } from '@/lib/constants';
@@ -38,10 +39,11 @@ export default function PredictionPanel({
           <p className="flex items-start gap-2 text-sm text-fg-dim">
             <LockOpenIcon className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              A prediction for this match wasn&rsquo;t locked before kickoff, so
-              it&rsquo;s voided and excluded from our scored record — integrity
-              over coverage. We&rsquo;d rather show a gap than a call we
-              can&rsquo;t stand behind.
+              A prediction for this match was voided — either it wasn&rsquo;t
+              locked before kickoff, or the fixture was cancelled or abandoned
+              after locking — so it&rsquo;s excluded from our scored record:
+              integrity over coverage. We&rsquo;d rather show a gap than a call
+              we can&rsquo;t stand behind.
             </span>
           </p>
         </div>
@@ -75,6 +77,7 @@ export default function PredictionPanel({
       />
 
       <LockStatusLine status={prediction.status} className="mt-4" />
+      <AuditLine prediction={prediction} />
 
       <p className="mt-3 border-t border-line pt-3 text-xs text-fg-dim">
         {THIRD_PARTY_LABEL}

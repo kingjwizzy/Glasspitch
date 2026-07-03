@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import ResultBadge from '@/components/ResultBadge';
-import { outcomeName, pct, probOf, RESULT_LABEL, scoreLine } from '@/lib/format';
+import { OUR_CALL_LABEL, outcomeName, pct, probOf, RESULT_LABEL, scoreLine } from '@/lib/format';
 import type { RecentCallView } from '@/lib/queries/homepage';
 
 // "How recent calls landed" — the signature section (DESIGN.md §1, §4). Finished
@@ -22,7 +22,7 @@ function CallRow({ c }: { c: RecentCallView }) {
             {c.home} <span className="text-fg-dim">v</span> {c.away}
           </p>
           <p className="mt-0.5 truncate text-xs text-fg-dim">
-            We backed {pickName} (
+            {OUR_CALL_LABEL} {pickName} (
             <span className="font-mono">{pct(pickProb)}</span>)
           </p>
         </div>

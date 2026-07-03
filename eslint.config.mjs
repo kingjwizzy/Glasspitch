@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated Playwright artifacts (git-ignored; a local `npm run test:e2e`
+    // writes minified bundles here that would otherwise fail `npm run lint`):
+    "playwright-report/**",
+    "test-results/**",
+    "playwright/.cache/**",
   ]),
 ]);
 

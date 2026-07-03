@@ -10,6 +10,7 @@ import { cache } from 'react';
 // and the URL is never deindexed as gone.
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import {
   buildScoredRecord,
   FIXTURE_ROW_SELECT,
@@ -18,7 +19,7 @@ import {
   type FixtureRowView,
   type RawFixtureRow,
 } from './fixtures';
-import { withTimeout } from './shared';
+import { paginate, previewAllowed, withTimeout } from './shared';
 import { previewLeagueData } from './league.preview';
 
 export interface LeagueData {
@@ -73,6 +74,7 @@ async function loadLeagueFixtures(leagueId: number): Promise<FixtureRowView[]> {
       .from('fixtures')
       .select(FIXTURE_ROW_SELECT)
       .eq('league_id', leagueId)
+      .gte('league.season', MIN_SEASON) // §5 season guard
       .order('kickoff_utc', { ascending: false })
       .limit(1000);
     if (error) return [];
@@ -115,29 +117,63 @@ async function load(slug: string): Promise<LeagueData | null> {
  * Load one league for the page and its metadata. Wrapped in React `cache()` so
  * `generateMetadata` and the page body share a single DB read per request.
  *
- * `PREVIEW_LEAGUE` is a server-only dev/preview escape hatch (NOT a NEXT_PUBLIC
- * var, never set in production): it returns representative in-memory fixtures
- * so league pages can be rendered and screenshotted with no seeded database.
- * It writes nothing.
+ * `PREVIEW_LEAGUE` is a server-only dev/preview escape hatch (NOT a
+ * NEXT_PUBLIC var, and requires the separate `ALLOW_PREVIEW=1` flag — see
+ * `previewAllowed()` — so it can never activate on a real deploy): it returns
+ * representative in-memory fixtures so league pages can be rendered and
+ * screenshotted with no seeded database. It writes nothing.
  */
 export const getLeagueData = cache(
   async (slug: string): Promise<LeagueData | null> => {
     if (!slug) return null;
-    if (process.env.PREVIEW_LEAGUE) return previewLeagueData(slug, process.env.PREVIEW_LEAGUE);
+    if (previewAllowed() && process.env.PREVIEW_LEAGUE) {
+      return previewLeagueData(slug, process.env.PREVIEW_LEAGUE);
+    }
     return load(slug);
   },
 );
 
 /**
- * All league slugs, for `generateStaticParams`. Returns [] on any error so the
+ * All league slugs, for `generateStaticParams` (and the sitemap). Paginated
+ * with `.range()` (§8): PostgREST silently caps an unbounded select at the
+ * project's Max Rows setting (default 1000). Returns [] on any error so the
  * build never fails — unknown slugs fall through to on-demand ISR.
  */
 export async function getAllLeagueSlugs(): Promise<string[]> {
   try {
     const sb = getSupabaseClient();
-    const { data, error } = await sb.from('leagues').select('slug');
-    if (error || !data) return [];
-    return (data as Array<{ slug: string }>).map((r) => r.slug);
+    const rows = await paginate<{ slug: string }>(async (from, to) => {
+      const { data, error } = await sb.from('leagues').select('slug').range(from, to);
+      if (error) return null;
+      return data;
+    });
+    return rows.map((r) => r.slug);
+  } catch {
+    return [];
+  }
+}
+
+export interface LeagueOption {
+  name: string;
+  slug: string;
+}
+
+/** Name + slug for every league — used by the v2 premium ledger's league
+ *  filter dropdown (§4). Returns [] on any error so the filter degrades to
+ *  "All leagues" rather than failing the page. */
+export async function getAllLeagueOptions(): Promise<LeagueOption[]> {
+  try {
+    const sb = getSupabaseClient();
+    const rows = await paginate<LeagueOption>(async (from, to) => {
+      const { data, error } = await sb
+        .from('leagues')
+        .select('name, slug')
+        .order('name', { ascending: true })
+        .range(from, to);
+      if (error) return null;
+      return data;
+    });
+    return rows;
   } catch {
     return [];
   }

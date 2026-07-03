@@ -4,6 +4,7 @@ import ProbabilityBar from '@/components/ProbabilityBar';
 import {
   favoured,
   formatKickoff,
+  OUR_CALL_LABEL,
   outcomeName,
   pct,
   probOf,
@@ -53,10 +54,10 @@ export default function FixtureRow({ fixture: f }: { fixture: FixtureRowView }) 
             <p className="truncate text-sm font-medium text-fg">
               {f.home} <span className="text-fg-dim">v</span> {f.away}
             </p>
-            {/* "We backed …" subtext — only shown when a prediction exists. */}
+            {/* "Our call: …" subtext — only shown when a prediction exists. */}
             {pred !== null && f.pick !== null && (
               <p className="mt-0.5 truncate text-xs text-fg-dim">
-                We backed {outcomeName(f.pick, f.home, f.away)} (
+                {OUR_CALL_LABEL} {outcomeName(f.pick, f.home, f.away)} (
                 <span className="font-mono">
                   {pct(
                     probOf(

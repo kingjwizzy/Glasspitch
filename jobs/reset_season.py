@@ -3,8 +3,12 @@
 Deletes predictions -> fixtures -> teams -> leagues for the given season, in
 FK-safe order, idempotently. Used to wipe disposable dev seed data (e.g. the 2022
 Qatar World Cup) so the switch to live data is one clean teardown — no manual DB
-surgery. Runs as the service role (the §7 immutability trigger is UPDATE-only and
-does not block DELETE). NOT part of normal operation.
+surgery. Runs as the service role, via the server-side ``teardown_season()``
+SECURITY DEFINER RPC (supabase/migrations/0003_harden_db.sql): a migration-0003
+BEFORE DELETE guard now rejects a direct client-side DELETE on any
+locked/scored prediction, so the RPC — which sets
+``glasspitch.allow_ledger_teardown='on'`` transaction-locally before deleting —
+is the only sanctioned way to remove those rows. NOT part of normal operation.
 
     python -m jobs.reset_season --season 2022 --dry-run   # report counts only
     python -m jobs.reset_season --season 2022             # delete
@@ -45,7 +49,7 @@ def run(
         log.info("[dry-run] would delete for season %s: %s", season, would_delete)
         return {"season": season, "dry_run": True, "would_delete": would_delete}
 
-    deleted = store.delete_season(season)
+    deleted = store.teardown_season(season)
     remaining = store.count_season_rows(season)  # expect all zero
     log.info("Deleted for season %s: %s; remaining: %s", season, deleted, remaining)
     return {"season": season, "dry_run": False, "deleted": deleted, "remaining": remaining}

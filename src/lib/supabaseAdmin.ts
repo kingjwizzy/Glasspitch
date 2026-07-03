@@ -2,13 +2,24 @@
 //
 // The secret key bypasses Row Level Security and can write (ARCHITECTURE.md
 // §7). It must NEVER reach the browser bundle (§12): the secret key is a
-// secret. In this product the Python jobs are the canonical writers; this
-// client exists only for any server-side maintenance the web layer may need.
+// secret. The Python jobs remain the only writer of football data; this
+// client is now ALSO used by two v2-amendment-sanctioned server-only callers
+// (ARCHITECTURE.md §0/§5, amended 2026-07-03):
+//   1. src/app/api/stripe/webhook/route.ts — the ONE writer of the billing
+//      tables (`subscriptions`, `stripe_events`), signature-verified.
+//   2. src/app/account/actions.ts's `deleteAccountAction` — self-serve GDPR
+//      account deletion (`auth.admin.deleteUser`), which cascades to
+//      `profiles`/`subscriptions` via FK constraints rather than writing a
+//      billing row directly.
+// No other caller is sanctioned; adding one needs an explicit ARCHITECTURE.md
+// amendment first, per CLAUDE.md's roster note.
 //
-// The runtime guard below throws immediately if this module is ever imported
-// into client code, satisfying the §7/§12 requirement that the secret key
-// never ship to the client.
+// `import 'server-only'` makes an accidental client-component import a BUILD
+// error rather than only a runtime throw in the visitor's browser (the
+// `typeof window` guard below is belt-and-braces on top of it, since it also
+// catches a bare dynamic `require`/`import()` that bundling might not).
 
+import 'server-only';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
 

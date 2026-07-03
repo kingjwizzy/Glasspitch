@@ -138,6 +138,38 @@ def test_dry_run_handles_empty_store(make_store, make_api):
     assert counts["api_fetched"] == 0 and counts["elo_inserted"] == 0
 
 
+# --- the write set is PHYSICALLY confined to config.SEASON, not just the -----
+# config-identity interlock (v2 hardening: the seeder must not be able to
+# back-date predictions onto a DIFFERENT season's finished fixtures in a
+# mixed DB -- the exact scenario mid-cutover, when both the disposable 2022
+# dev season and the live 2026 season coexist) ------------------------------
+
+
+def test_seeder_never_touches_a_different_seasons_finished_fixtures(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    # config.SEASON == 2022 here (autouse _dev_season). A finished fixture
+    # explicitly tagged as the LIVE 2026 season must be read-invisible to the
+    # seeder even though it's sitting right there in the same store.
+    dev_fixture = _finished(
+        make_fixture, id=300, api_fixture_id=9001, season=2022,
+        kickoff_utc="2022-11-20T16:00:00+00:00",
+    )
+    live_fixture = _finished(
+        make_fixture, id=301, api_fixture_id=9002, season=2026,
+        kickoff_utc="2026-06-20T16:00:00+00:00",
+    )
+    store = make_store(finished=[dev_fixture, live_fixture])
+    api = make_api(predictions={9001: predictions_payload, 9002: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api, sleep=NOOP_SLEEP)
+
+    assert counts["finished"] == 1  # only the dev-season fixture was ever seen
+    assert api.prediction_calls == [9001]  # the live fixture's API was never called
+    fixture_ids_seeded = {p["fixture_id"] for p in store.inserted_predictions}
+    assert fixture_ids_seeded == {300}  # the live fixture (301) was never touched
+
+
 def test_seeded_elo_uses_replayed_ratings(make_store, make_api, make_fixture):
     # Elo ratings are derived by replaying finished results; a 2-0 win should lift
     # the home side above the cold-start default. Empty api payload isolates Elo.

@@ -10,9 +10,11 @@ import 'server-only';
 // throws and never blocks the page (§5 failure handling).
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
+import { VOID_STATUSES } from '@/lib/types';
 import { favoured } from '@/lib/format';
-import { DISPLAY_SOURCE, one, withTimeout } from './shared';
+import { DISPLAY_SOURCE, one, previewAllowed, withTimeoutOrThrow } from './shared';
 import { previewHomepageData } from './homepage.preview';
 
 export { DISPLAY_SOURCE };
@@ -92,6 +94,7 @@ interface RawTeam {
 }
 interface RawLeague {
   name: string;
+  season: number;
 }
 interface RawPrediction {
   prob_home: number;
@@ -135,22 +138,25 @@ interface RawScoredFixture {
 // fixtures has TWO FKs into teams, so the embeds MUST be disambiguated by
 // constraint name or PostgREST errors. predictions is embedded un-filtered (a
 // fixture has at most two: api-football + elo-v1) and the displayed one is
-// picked in JS — avoids the embedded-filter / inner-join footguns.
+// picked in JS — avoids the embedded-filter / inner-join footguns. `!inner` on
+// the league embed (rather than the default to-one left join) is required so
+// `.gte('league.season', MIN_SEASON)` below actually EXCLUDES rows instead of
+// merely nulling the embed (§5 season guard).
 const FIXTURE_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
-  league:leagues!fixtures_league_id_fkey(name),
+  league:leagues!fixtures_league_id_fkey!inner(name, season),
   predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals, status, locked_at, source)
 `;
 
 const SCORED_SELECT = `
   id, prob_home, prob_draw, prob_away, result, brier_score, final_home_goals, final_away_goals,
-  fixture:fixtures!predictions_fixture_id_fkey(
+  fixture:fixtures!predictions_fixture_id_fkey!inner(
     id,
     home_team:teams!fixtures_home_team_id_fkey(name),
     away_team:teams!fixtures_away_team_id_fkey(name),
-    league:leagues!fixtures_league_id_fkey(name)
+    league:leagues!fixtures_league_id_fkey!inner(name, season)
   )
 `;
 
@@ -158,11 +164,14 @@ function mapFixture(r: RawFixture): FixtureView {
   const home = one(r.home_team);
   const away = one(r.away_team);
   const league = one(r.league);
-  // Exclude unlocked_void: a prediction published after kickoff is voided for
-  // integrity (§10) and must never be presented to a visitor as our call.
+  // Exclude unlocked_void/void_cancelled: a prediction published after kickoff,
+  // or one whose fixture was cancelled post-lock, is voided for integrity (§10)
+  // and must never be presented to a visitor as our call.
   const pred =
     (r.predictions ?? []).find(
-      (p) => p.source === DISPLAY_SOURCE && p.status !== 'unlocked_void',
+      (p) =>
+        p.source === DISPLAY_SOURCE &&
+        !VOID_STATUSES.includes(p.status as PredictionStatus),
     ) ?? null;
   return {
     id: r.id,
@@ -224,6 +233,7 @@ async function load(): Promise<HomepageData> {
       .from('fixtures')
       .select(FIXTURE_SELECT)
       .eq('status', 'live')
+      .gte('league.season', MIN_SEASON)
       .order('kickoff_utc', { ascending: true })
       .limit(5),
     sb
@@ -231,6 +241,7 @@ async function load(): Promise<HomepageData> {
       .select(FIXTURE_SELECT)
       .eq('status', 'scheduled')
       .gte('kickoff_utc', nowIso)
+      .gte('league.season', MIN_SEASON)
       .order('kickoff_utc', { ascending: true })
       .limit(8),
     sb
@@ -238,6 +249,7 @@ async function load(): Promise<HomepageData> {
       .select(SCORED_SELECT)
       .eq('source', DISPLAY_SOURCE)
       .eq('status', 'scored')
+      .gte('fixture.league.season', MIN_SEASON)
       .order('scored_at', { ascending: false })
       .limit(5),
     // No DB aggregate view exists yet (§7) — fetch the scored Brier column and
@@ -246,15 +258,31 @@ async function load(): Promise<HomepageData> {
     // would diverge the mean from an exact count. For v1's single tournament
     // this window is the full record; /ledger is the all-time authority and a
     // SQL aggregate RPC is the scale path once the ledger outgrows the window.
+    // The fixture/league embed exists ONLY to apply the §5 season guard —
+    // its columns are never read.
     sb
       .from('predictions')
-      .select('brier_score')
+      .select(
+        'brier_score, fixture:fixtures!predictions_fixture_id_fkey!inner(league:leagues!fixtures_league_id_fkey!inner(season))',
+      )
       .eq('source', DISPLAY_SOURCE)
       .eq('status', 'scored')
       .not('brier_score', 'is', null)
+      .gte('fixture.league.season', MIN_SEASON)
       .order('scored_at', { ascending: false })
       .limit(1000),
   ]);
+
+  // supabase-js RESOLVES errors rather than throwing — an unchecked `res.error`
+  // is the primary failure route. Throw so a failed ISR background
+  // revalidation keeps serving the last good cached page and retries, instead
+  // of silently replacing the homepage's live/record surfaces with a false
+  // empty state.
+  for (const res of [liveRes, upcomingRes, scoredRes, recordRes]) {
+    if (res.error) {
+      throw new Error(`homepage read failed: ${res.error.message}`);
+    }
+  }
 
   const live = ((liveRes.data as RawFixture[] | null) ?? []).map(mapFixture);
   const upcomingAll = ((upcomingRes.data as RawFixture[] | null) ?? []).map(mapFixture);
@@ -295,19 +323,22 @@ async function load(): Promise<HomepageData> {
  * The single read the home page makes. Server-only.
  *
  * `PREVIEW_HOMEPAGE` is a dev/preview escape hatch (NOT a NEXT_PUBLIC var, so it
- * is server-only and never reaches the client bundle, and is never set in
- * production): it returns representative in-memory fixtures so the page can be
- * rendered and screenshotted with no seeded database. It writes nothing.
+ * is server-only and never reaches the client bundle, and requires the
+ * separate `ALLOW_PREVIEW=1` flag — see `previewAllowed()` — so it can never
+ * activate on a real deploy): it returns representative in-memory fixtures so
+ * the page can be rendered and screenshotted with no seeded database. It
+ * writes nothing.
+ *
+ * A genuine DB failure THROWS (see `load()`) rather than being swallowed to
+ * EMPTY — the caller (the page, ISR) is responsible for that behaviour.
  */
 export async function getHomepageData(): Promise<HomepageData> {
-  const preview = process.env.PREVIEW_HOMEPAGE;
-  if (preview === '1' || preview === 'default') return previewHomepageData('default');
-  if (preview === 'live') return previewHomepageData('live');
-  if (preview === 'empty') return EMPTY;
-
-  try {
-    return await withTimeout(load(), 6000, EMPTY);
-  } catch {
-    return EMPTY;
+  if (previewAllowed()) {
+    const preview = process.env.PREVIEW_HOMEPAGE;
+    if (preview === '1' || preview === 'default') return previewHomepageData('default');
+    if (preview === 'live') return previewHomepageData('live');
+    if (preview === 'empty') return EMPTY;
   }
+
+  return withTimeoutOrThrow(load(), 6000);
 }

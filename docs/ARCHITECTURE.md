@@ -8,7 +8,7 @@
 
 - This file is the spec. Claude Code reads it; you verify the things flagged **[VERIFY YOURSELF]** (the scoring maths, database access rules, secret handling, and the legal/disclaimer text).
 - Everything buildable is built by Claude Code via prompts. Account creation, payments, secrets, and DNS are done by **you** (an AI cannot and should not do these).
-- Golden rule that the whole project depends on: **the scheduled jobs talk to the football API; the website only ever talks to our own database.** Never call the API per visitor.
+- Golden rule that the whole project depends on: **the scheduled jobs talk to the football API; the website only ever talks to our own database.** Never call the API per visitor. *(v2 amendment, 2026-07-03: the Stripe webhook route — server-only, signature-verified — is the one sanctioned writer of billing/account data; football-data tables remain jobs-only. See §5, §13.)*
 
 ---
 
@@ -63,6 +63,8 @@ Launches around the 2026 World Cup knockouts on a **league-agnostic** design, th
 | Monetisation | **Ready, not on:** `tier` field in content model; reserved ad slots | Premium gate on deeper analysis; vetted payment processor; ads (own domain + approval) |
 | Accounts | None | Email capture, then accounts + saved preferences |
 
+**v2 status (2026-07-03):** premium is being switched on. The gate covers **depth content only** — match insights/xG, ledger CSV export and filters. **The full prediction set and the complete scored ledger stay free forever**: gating them would destroy both the moat (§1) and the compliance asset (§13). Ads remain off. Pricing: £4/month or £29/year (Stripe; test mode until vetting + sign-off).
+
 ---
 
 ## 5. System architecture
@@ -100,6 +102,8 @@ flowchart TD
 **Request flow:** visitor → Vercel edge/CDN → server-rendered (or pre-rendered/ISR) page → reads from Supabase → HTML. No third-party API call is ever triggered by a visitor.
 
 **Data flow:** API-Football → Python jobs → Supabase (write) → Next.js (read) → visitor.
+
+**Billing data flow (v2, 2026-07-03):** Stripe → webhook route handler (signature-verified, idempotent via `stripe_events`) → Supabase billing tables (`profiles`, `subscriptions`) → RLS gates premium reads. The webhook writer holds grants on billing tables **only** — it physically cannot touch football data, and the jobs never touch billing data.
 
 **Main services:** API-Football (data), Supabase (Postgres + auth-ready), Vercel (web hosting + cron or an external scheduler), Sentry (errors), Plausible or GA4 (analytics).
 
@@ -156,6 +160,8 @@ Tables (Postgres). Times are `timestamptz` in UTC.
 | `log_loss` | numeric, nullable | computed at scoring (Section 10) |
 | `scored_at` | timestamptz, nullable | |
 | `created_at` | timestamptz | default now() |
+
+**v2 tables (2026-07-03):** `profiles` (PK/FK → `auth.users`, minimal fields), `subscriptions` (`stripe_customer_id`, `stripe_subscription_id`, `status`, `price_id`, `current_period_end`), `stripe_events` (webhook idempotency ledger), `fixture_insights` (premium depth content — written by the jobs, readable only via an active-subscription RLS check), `job_runs` (pipeline observability, service-role-only). `predictions.tier` is **not** the gating mechanism — ledger rows are never gated; premium data lives only in premium tables.
 
 **Integrity rules [VERIFY YOURSELF]**
 - A `CHECK` that `prob_home + prob_draw + prob_away` is within a small epsilon of 1.0.
@@ -265,7 +271,7 @@ For one match with predicted probabilities `p_home, p_draw, p_away` and the actu
 
 **Data / privacy:** v1 holds **no personal data** and uses **no personal-data scraping** (no social-media monitoring of players or anyone else — public ≠ free to process). Football data comes from licensed providers. **If accounts are added later:** publish a privacy notice, register with the ICO if required, capture only what's needed, support access/deletion requests, and use a lawful basis for any email marketing.
 
-**Monetisation guardrails:** premium is built ready but off until there's a credible record; any payment processor must be vetted up front (gambling-adjacent businesses are often treated as high-risk); ads require your **own domain** + network approval; affiliate/"bet now" links stay **out** of the product.
+**Monetisation guardrails (amended 2026-07-03):** premium v2 is active in **Stripe test mode**; live keys flip only after Stripe's restricted-business review ("sports forecasting" is on their list) clears **and** professional legal sign-off is obtained. The scored ledger and all predictions stay free forever. Any payment processor must be vetted up front (gambling-adjacent businesses are often treated as high-risk); ads remain **off** (own domain + network approval would be prerequisites); affiliate/"bet now" links stay **out** of the product, permanently.
 
 ---
 
@@ -302,11 +308,11 @@ Sequenced for AI-assisted building. "Day" = a focused working session; push hard
 
 ## 16. Open questions / deferred decisions
 
-- Brand name and exact domain (your call — keep it neutral, not "tips/bet/odds").
-- Scheduler: Vercel Cron vs GitHub Actions vs Supabase scheduled functions (decide at Day 2).
-- Premium pricing and which fields are gated (defer until there's a record).
+- ~~Brand name and exact domain~~ **Resolved 2026-07-03:** Glass Pitch, glasspitch.com (Namecheap → Vercel).
+- ~~Scheduler~~ **Resolved 2026-07-03:** GitHub Actions (repo made public for unlimited minutes; failure alerting + keepalive added).
+- ~~Premium pricing and which fields are gated~~ **Resolved 2026-07-03:** £4/mo + £29/yr; gates depth content only — the ledger and all predictions stay free (§4).
 - Whether the in-house Elo ever becomes primary (decided *by the ledger*).
-- Exact current responsible-gambling resources to link (verify at build time).
+- ~~Exact current responsible-gambling resources to link~~ **Resolved 2026-07-03:** National Gambling Helpline (GamCare) 0808 8020 133, gamcare.org.uk, gamstop.co.uk, gambleaware.org — wired; owner eyeball + professional sign-off still gates premium-live.
 
 ---
 

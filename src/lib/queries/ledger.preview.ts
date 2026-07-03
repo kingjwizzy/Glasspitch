@@ -33,6 +33,7 @@ function row(
     id: `preview-${fixtureId}`,
     fixtureId,
     league: 'FIFA World Cup',
+    leagueSlug: 'world-cup',
     home,
     away,
     kickoffUtc: '2026-06-01T18:00:00+00:00',

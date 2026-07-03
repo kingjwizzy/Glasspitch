@@ -16,12 +16,25 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # `next build` inlines NEXT_PUBLIC_* at build time. Dummy values let the
-      # build run with no real database: static pages prerender, and the dynamic
-      # routes (/match/[id], /team/[slug], /league/[slug]) are server-rendered on
-      # demand — they never query the DB at build time.
+      # build run with no real database: the dynamic routes (/match/[id],
+      # /team/[slug], /league/[slug]) defer to on-demand ISR (their
+      # generateStaticParams and the sitemap enumerators degrade to [] on any
+      # error), but `/` and `/ledger` are static ISR routes whose PRIMARY read
+      # deliberately throws on DB failure (src/lib/queries/shared.ts
+      # withTimeoutOrThrow — so a live deploy's ISR serves the last good page
+      # instead of caching a false "no record" empty state). At build time that
+      # correct throw would fail the prerender against the dummy URL, so those
+      # two routes render the server-only preview fixtures instead — the same
+      # double-flagged, write-nothing hatch the e2e webServer uses
+      # (playwright.config.ts). PREVIEW_* + ALLOW_PREVIEW are NOT NEXT_PUBLIC_*
+      # vars: they gate a server-side read path in this throwaway CI build and
+      # are never set on a real deployment.
       NEXT_PUBLIC_SUPABASE_URL: https://dummy.supabase.co
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_dummy
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      ALLOW_PREVIEW: '1'
+      PREVIEW_HOMEPAGE: '1'
+      PREVIEW_LEDGER: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,22 +47,82 @@ jobs:
       - run: npm run build
 
   jobs-tests:
-    name: Python jobs — pytest
+    name: Python jobs — ruff + pytest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          # Single source of truth for the jobs' Python version — the
+          # repo-root .python-version (also what a local `pyenv`-managed
+          # jobs/.venv should be built against; see jobs/README.md "Python
+          # version"). Keep this aligned with scheduler.yml, which pins the
+          # same file for the actual production runtime.
+          python-version-file: '.python-version'
       - run: pip install -r jobs/requirements-dev.txt
+      # Static gate on the DB-writing layer (previously pytest was the ONLY
+      # gate on jobs/, unlike the web layer's eslint+tsc). Scoped to jobs/
+      # excluding jobs/tests/ (test-engineer's lane — not this gate's call to
+      # make lint-clean on their behalf). mypy was evaluated too but produces
+      # dozens of pre-existing errors from supabase-py's loosely-typed JSON
+      # response objects (`res.data[0]["id"]`-style access throughout) — not a
+      # "quick" add, so deliberately left out; ruff alone is the fast,
+      # high-value static gate here.
+      - name: ruff check (jobs/, excluding jobs/tests/)
+        run: ruff check jobs --extend-exclude jobs/tests
       - run: python -m pytest -q
+
+  jobs-integration:
+    name: Python jobs — integration (real Postgres via Supabase CLI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+      - run: pip install -r jobs/requirements-dev.txt
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      # supabase/config.toml is checked in (this migration set's own doing);
+      # `supabase init` here is a defensive fallback ONLY, so this job still
+      # works if that file is ever removed/renamed.
+      - name: supabase init (only if supabase/config.toml is missing)
+        run: |
+          if [ ! -f supabase/config.toml ]; then
+            supabase init --with-vscode-settings=false --with-intellij-settings=false
+          fi
+      - name: Start the local stack and apply migrations 0001->0003 from scratch
+        run: |
+          supabase start
+          supabase db reset
+      - name: Export the local stack's connection details for SupabaseStore
+        run: |
+          supabase status -o json > /tmp/supabase-status.json
+          {
+            echo "SUPABASE_URL=$(jq -r '.API_URL' /tmp/supabase-status.json)"
+            echo "SUPABASE_SECRET_KEY=$(jq -r '.SERVICE_ROLE_KEY' /tmp/supabase-status.json)"
+          } >> "$GITHUB_ENV"
+      # -m integration selects ONLY tests marked @pytest.mark.integration
+      # (pytest.ini's addopts excludes them from the default run above) —
+      # authored in jobs/tests/ by test-engineer: trigger/CHECK/RLS/RPC
+      # behaviour that a mocked FakeStore can't verify.
+      - name: Run integration tests against the real stack
+        run: python -m pytest -m integration -q
+      - name: Stop the local stack
+        if: always()
+        run: supabase stop --no-backup
 
   e2e:
     name: E2E + a11y — Playwright
     runs-on: ubuntu-latest
     env:
       # The Playwright webServer runs `next build && next start`; same dummy env
-      # rationale as the web job. Smoke + axe run against the static pages only.
+      # rationale as the web job. playwright.config.ts's webServer.env merges
+      # ALLOW_PREVIEW + all five PREVIEW_* flags over this, so smoke + axe cover
+      # the DB-backed routes (populated /, /ledger, /match, /team, /league) with
+      # representative preview data and zero database.
       NEXT_PUBLIC_SUPABASE_URL: https://dummy.supabase.co
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_dummy
       NEXT_PUBLIC_SITE_URL: http://localhost:3000

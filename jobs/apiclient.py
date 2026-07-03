@@ -139,8 +139,33 @@ class ApiFootballClient:
             raise ApiFootballError(f"API-Football returned errors for {path}: {errors}")
 
     # --- typed endpoint helpers ---
-    def get_fixtures(self, league: int, season: int) -> dict[str, Any]:
-        return self.get("/fixtures", {"league": league, "season": season})
+    def get_fixtures(self, league: int, season: int, *, page: int = 1) -> dict[str, Any]:
+        """GET /fixtures for one league/season/page.
+
+        API-Football pages large responses (``payload['paging']``); callers
+        must loop while ``paging.current < paging.total``, incrementing
+        ``page`` (jobs/fetch_fixtures.py). Each page is a separate request and
+        counts against the per-run budget like any other call.
+
+        The first page is requested WITHOUT a ``page`` param: /fixtures
+        rejects an explicit ``page`` field outright ("The Page field do not
+        exist" — verified live 2026-07-03, WC 2026 cutover) even though its
+        responses carry a ``paging`` block. Only follow-up pages (which no
+        /fixtures response has produced in practice — paging is always 1/1)
+        send it, so a hypothetical multi-page response still gets attempted
+        rather than silently truncated, and the per-league error isolation in
+        fetch_fixtures contains the fallout if the API rejects that too.
+        """
+        params: dict[str, Any] = {"league": league, "season": season}
+        if page > 1:
+            params["page"] = page
+        return self.get("/fixtures", params)
 
     def get_predictions(self, fixture: int) -> dict[str, Any]:
         return self.get("/predictions", {"fixture": fixture})
+
+    def get_fixture_statistics(self, fixture: int) -> dict[str, Any]:
+        """GET /fixtures/statistics for one fixture (jobs/fetch_insights.py,
+        ARCHITECTURE.md v2 §4/§7/§8) -- per-team shot/possession/card/xG
+        counters, fetched exactly once per fixture like /predictions."""
+        return self.get("/fixtures/statistics", {"fixture": fixture})

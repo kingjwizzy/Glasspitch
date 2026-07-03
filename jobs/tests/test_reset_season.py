@@ -1,6 +1,6 @@
 """Tests for the season teardown — the go-live cutover safety net (docs/SEEDING.md).
 
-Exercises the REAL jobs.db.SupabaseStore.delete_season / count_season_rows (run
+Exercises the REAL jobs.db.SupabaseStore.teardown_season / count_season_rows (run
 against an in-memory FakeSupabaseClient, no DB) plus the jobs.reset_season.run
 orchestration on top of them. The cutover bet is "wiping 2022 leaves the rest of
 the DB untouched"; the season-isolation and FK-order tests below prove it.
@@ -64,14 +64,14 @@ def test_count_season_rows_zero_for_absent_season(make_supabase_client):
     assert counts == {"leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0}
 
 
-# --- delete_season: correctness, FK order, isolation, immutable rows ----------
+# --- teardown_season: correctness, FK order, isolation, immutable rows ----------
 
 
-def test_delete_season_removes_all_rows_for_the_season(make_supabase_client):
+def test_teardown_season_removes_all_rows_for_the_season(make_supabase_client):
     client = make_supabase_client(**_season_dataset(season=2022, league_id=1, base=0))
     store = SupabaseStore(client=client)
 
-    deleted = store.delete_season(2022)
+    deleted = store.teardown_season(2022)
 
     assert deleted == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3}
     # Nothing left for the season, in any table.
@@ -84,14 +84,14 @@ def test_delete_season_removes_all_rows_for_the_season(make_supabase_client):
     assert client.tables["predictions"] == []
 
 
-def test_delete_season_uses_fk_safe_order(make_supabase_client):
+def test_teardown_season_uses_fk_safe_order(make_supabase_client):
     """predictions -> fixtures -> teams -> leagues (children before parents)."""
     client = make_supabase_client(**_season_dataset(season=2022, league_id=1, base=0))
-    SupabaseStore(client=client).delete_season(2022)
+    SupabaseStore(client=client).teardown_season(2022)
     assert client.delete_log == ["predictions", "fixtures", "teams", "leagues"]
 
 
-def test_delete_season_isolates_other_seasons(make_supabase_client):
+def test_teardown_season_isolates_other_seasons(make_supabase_client):
     # The property the cutover depends on: wiping 2022 leaves 2026 fully intact.
     data = _merge(
         _season_dataset(season=2022, league_id=1, base=0),
@@ -101,7 +101,7 @@ def test_delete_season_isolates_other_seasons(make_supabase_client):
     store = SupabaseStore(client=client)
 
     before_2026 = store.count_season_rows(2026)
-    deleted = store.delete_season(2022)
+    deleted = store.teardown_season(2022)
 
     assert deleted == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3}
     assert store.count_season_rows(2022) == {
@@ -115,27 +115,27 @@ def test_delete_season_isolates_other_seasons(make_supabase_client):
     assert {p["id"] for p in client.tables["predictions"]} == {"p601", "p602", "p603"}
 
 
-def test_delete_season_removes_locked_and_scored_predictions(make_supabase_client):
+def test_teardown_season_removes_locked_and_scored_predictions(make_supabase_client):
     # Immutability guards UPDATE, not DELETE: the ledger's locked/scored rows must
     # still be torn down by a season reset.
     client = make_supabase_client(**_season_dataset(season=2022, league_id=1, base=0))
     statuses_before = {p["status"] for p in client.tables["predictions"]}
     assert {"locked", "scored"} <= statuses_before  # the dataset really has them
 
-    SupabaseStore(client=client).delete_season(2022)
+    SupabaseStore(client=client).teardown_season(2022)
 
     assert client.tables["predictions"] == []  # locked + scored rows gone too
 
 
-def test_delete_season_is_idempotent(make_supabase_client):
+def test_teardown_season_is_idempotent(make_supabase_client):
     client = make_supabase_client(**_season_dataset(season=2022, league_id=1, base=0))
     store = SupabaseStore(client=client)
 
-    first = store.delete_season(2022)
+    first = store.teardown_season(2022)
     assert first == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 3}
 
     deletes_after_first = len(client.delete_log)
-    second = store.delete_season(2022)  # no-op, no error
+    second = store.teardown_season(2022)  # no-op, no error
 
     assert second == {"leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0}
     # Nothing left to delete -> no further delete calls were issued.
@@ -145,20 +145,20 @@ def test_delete_season_is_idempotent(make_supabase_client):
 # --- edge cases --------------------------------------------------------------
 
 
-def test_delete_season_empty_store_is_a_noop(make_supabase_client):
+def test_teardown_season_empty_store_is_a_noop(make_supabase_client):
     client = make_supabase_client()  # nothing seeded
-    deleted = SupabaseStore(client=client).delete_season(2022)
+    deleted = SupabaseStore(client=client).teardown_season(2022)
     assert deleted == {"leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0}
     assert client.delete_log == []  # no league ids -> no delete calls at all
 
 
-def test_delete_season_fixtures_but_no_predictions(make_supabase_client):
+def test_teardown_season_fixtures_but_no_predictions(make_supabase_client):
     data = _season_dataset(season=2022, league_id=1, base=0)
     data["predictions"] = []  # league + teams + fixtures, but no predictions
     client = make_supabase_client(**data)
     store = SupabaseStore(client=client)
 
-    deleted = store.delete_season(2022)
+    deleted = store.teardown_season(2022)
 
     assert deleted == {"leagues": 1, "teams": 2, "fixtures": 2, "predictions": 0}
     assert store.count_season_rows(2022) == {
@@ -168,12 +168,12 @@ def test_delete_season_fixtures_but_no_predictions(make_supabase_client):
     assert client.delete_log == ["predictions", "fixtures", "teams", "leagues"]
 
 
-def test_delete_season_with_no_matching_league(make_supabase_client):
+def test_teardown_season_with_no_matching_league(make_supabase_client):
     # Season present in the DB, but not the one we ask to delete.
     client = make_supabase_client(**_season_dataset(season=2026, league_id=2, base=500))
     store = SupabaseStore(client=client)
 
-    deleted = store.delete_season(2022)
+    deleted = store.teardown_season(2022)
 
     assert deleted == {"leagues": 0, "teams": 0, "fixtures": 0, "predictions": 0}
     assert client.delete_log == []  # nothing matched -> nothing deleted

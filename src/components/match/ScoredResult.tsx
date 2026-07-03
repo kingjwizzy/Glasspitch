@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import ResultBadge from '@/components/ResultBadge';
 import { ArrowRightIcon } from '@/components/icons';
-import { outcomeName, pct, predictedPick, probOf, scoreLine } from '@/lib/format';
+import { OUR_CALL_LABEL, outcomeName, pct, predictedPick, probOf, scoreLine } from '@/lib/format';
 import type { MatchPrediction } from '@/lib/queries/match';
 import type { MatchResult } from '@/lib/types';
 
@@ -79,7 +79,7 @@ export default function ScoredResult({
             {hit ? 'Correct call' : 'Missed call'}
           </p>
           <p className="mt-1 text-sm leading-relaxed text-fg-dim">
-            We backed {pickName} at <span className="font-mono">{pickPct}</span>.
+            {OUR_CALL_LABEL} {pickName} (<span className="font-mono">{pickPct}</span>).
             It finished <span className="font-mono">{actual}</span> —{' '}
             {outcomeDescription(result, home, away)}.
           </p>
@@ -124,7 +124,7 @@ export default function ScoredResult({
           </div>
           <Link
             href="/ledger"
-            className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-green transition-colors hover:text-green-bright"
+            className="mt-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-green transition-colors hover:text-green-bright"
           >
             How we score every call
             <ArrowRightIcon className="h-3.5 w-3.5" />

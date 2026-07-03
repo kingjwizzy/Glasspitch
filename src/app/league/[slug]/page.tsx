@@ -7,6 +7,7 @@ import FixtureList from '@/components/FixtureList';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import { getLeagueData, getAllLeagueSlugs } from '@/lib/queries/league';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
+import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so fixture
 // lists and record stats stay fresh with no per-visitor work. Never calls the
@@ -58,18 +59,8 @@ export async function generateMetadata({
       description,
       url: `/league/${slug}`,
     },
-    twitter: { card: 'summary', title, description },
+    twitter: { card: 'summary_large_image', title, description },
   };
-}
-
-/** Serialise JSON-LD for safe embedding in a <script> tag: escape the
- *  characters that could otherwise break out of the element (defence in depth —
- *  league/country names come from the jobs feed, never a visitor). */
-function jsonLdScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/&/g, '\\u0026')
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e');
 }
 
 export default async function LeaguePage({ params }: LeaguePageProps) {
@@ -78,6 +69,7 @@ export default async function LeaguePage({ params }: LeaguePageProps) {
   if (!data) notFound();
 
   const { name, country, season, upcoming, recent, record } = data;
+  const breadcrumb = breadcrumbJsonLd([{ name, url: `/league/${slug}` }]);
 
   // Minimal SportsEvent JSON-LD for the tournament — plain names only, no
   // official marks, no odds (ARCHITECTURE.md §13). schema.org SportsEvent
@@ -108,6 +100,10 @@ export default async function LeaguePage({ params }: LeaguePageProps) {
           dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
         />
       )}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(breadcrumb) }}
+      />
 
       <header>
         <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">

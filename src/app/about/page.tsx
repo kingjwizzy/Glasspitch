@@ -19,17 +19,21 @@ export const metadata: Metadata = {
     description: ABOUT_DESCRIPTION,
     url: '/about',
   },
-  twitter: { card: 'summary', title: ABOUT_TITLE, description: ABOUT_DESCRIPTION },
+  twitter: { card: 'summary_large_image', title: ABOUT_TITLE, description: ABOUT_DESCRIPTION },
 };
 
 export default function AboutPage() {
   return (
     <article className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">About Glass Pitch</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+        About Glass Pitch
+      </h1>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">What this is</h2>
-        <p className="text-black/70 dark:text-white/70">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          What this is
+        </h2>
+        <p className="text-fg-dim">
           Glass Pitch is a free, mobile-first football <strong>analysis</strong>{' '}
           site. For each match we show home/draw/away probabilities, a predicted
           score, recent form, and a short plain-language read of the matchup.
@@ -39,8 +43,10 @@ export default function AboutPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Methodology</h2>
-        <p className="text-black/70 dark:text-white/70">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Methodology
+        </h2>
+        <p className="text-fg-dim">
           v1 probabilities come from an established third-party model, clearly
           labelled as such on every match page. Alongside it we quietly log a
           simple in-house Elo rating so we can compare the two over time and only
@@ -51,12 +57,14 @@ export default function AboutPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Analysis, not advice</h2>
-        <p className="text-black/70 dark:text-white/70">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Analysis, not advice
+        </h2>
+        <p className="text-fg-dim">
           Most tipster sites hide their losses and make claims you cannot verify.
           We do the opposite: every prediction is locked at kickoff and recorded
           in a permanent public{' '}
-          <Link href="/ledger" className="underline">
+          <Link href="/ledger" className="text-green underline transition-colors hover:text-green-bright">
             ledger
           </Link>
           , wins and losses alike. We never present a prediction as a guaranteed
@@ -66,10 +74,15 @@ export default function AboutPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Staying responsible</h2>
-        <p className="text-black/70 dark:text-white/70">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Staying responsible
+        </h2>
+        <p className="text-fg-dim">
           Football should stay fun. If betting stops being fun, please see our{' '}
-          <Link href="/responsible-gambling" className="underline">
+          <Link
+            href="/responsible-gambling"
+            className="text-green underline transition-colors hover:text-green-bright"
+          >
             responsible gambling
           </Link>{' '}
           page. 18+.

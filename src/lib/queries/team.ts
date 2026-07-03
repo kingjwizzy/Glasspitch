@@ -11,6 +11,7 @@ import { cache } from 'react';
 // [] via withTimeout rather than blocking the page (§5 failure handling).
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import {
   buildScoredRecord,
   FIXTURE_ROW_SELECT,
@@ -20,7 +21,7 @@ import {
   type RawFixtureRow,
 } from './fixtures';
 import type { FormResult } from './match';
-import { one, withTimeout } from './shared';
+import { one, paginate, previewAllowed, withTimeout } from './shared';
 import { previewTeamData } from './team.preview';
 
 export interface TeamData {
@@ -135,6 +136,7 @@ async function loadTeamFixtures(teamId: number): Promise<FixtureRowView[]> {
       .from('fixtures')
       .select(FIXTURE_ROW_SELECT)
       .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+      .gte('league.season', MIN_SEASON) // §5 season guard
       .order('kickoff_utc', { ascending: false })
       .limit(500);
     if (error) return [];
@@ -196,28 +198,37 @@ async function load(slug: string): Promise<TeamData | null> {
  * `generateMetadata` and the page body share a single DB read per request.
  *
  * `PREVIEW_TEAM` is a server-only dev/preview escape hatch (NOT a NEXT_PUBLIC
- * var, never set in production): it returns representative in-memory fixtures
- * so team pages can be rendered and screenshotted with no seeded database.
- * It writes nothing.
+ * var, and requires the separate `ALLOW_PREVIEW=1` flag — see
+ * `previewAllowed()` — so it can never activate on a real deploy): it returns
+ * representative in-memory fixtures so team pages can be rendered and
+ * screenshotted with no seeded database. It writes nothing.
  */
 export const getTeamData = cache(
   async (slug: string): Promise<TeamData | null> => {
     if (!slug) return null;
-    if (process.env.PREVIEW_TEAM) return previewTeamData(slug, process.env.PREVIEW_TEAM);
+    if (previewAllowed() && process.env.PREVIEW_TEAM) {
+      return previewTeamData(slug, process.env.PREVIEW_TEAM);
+    }
     return load(slug);
   },
 );
 
 /**
- * All team slugs, for `generateStaticParams`. Returns [] on any error so the
- * build never fails — unknown slugs fall through to on-demand ISR.
+ * All team slugs, for `generateStaticParams` (and the sitemap). Paginated with
+ * `.range()` (§8): PostgREST silently caps an unbounded select at the
+ * project's Max Rows setting (default 1000), which club-scale team counts
+ * would exceed. Returns [] on any error so the build never fails — unknown
+ * slugs fall through to on-demand ISR.
  */
 export async function getAllTeamSlugs(): Promise<string[]> {
   try {
     const sb = getSupabaseClient();
-    const { data, error } = await sb.from('teams').select('slug');
-    if (error || !data) return [];
-    return (data as Array<{ slug: string }>).map((r) => r.slug);
+    const rows = await paginate<{ slug: string }>(async (from, to) => {
+      const { data, error } = await sb.from('teams').select('slug').range(from, to);
+      if (error) return null;
+      return data;
+    });
+    return rows.map((r) => r.slug);
   } catch {
     return [];
   }

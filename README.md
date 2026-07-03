@@ -10,15 +10,18 @@ The identity and the moat is **radical transparency**: a permanent, public
 scored properly after full-time (Brier score, log loss, calibration), and the
 misses stay visible forever.
 
-> `ARCHITECTURE.md` is the single source of truth for this project. Read it
-> first. Do not let the build drift from its invariants.
+> `docs/ARCHITECTURE.md` is the single source of truth for this project; read it
+> first, and do not let the build drift from its invariants. `docs/DESIGN.md` is
+> the source of truth for colours, tokens, type, and voice. `docs/STATUS.md` is
+> the live snapshot of what is built vs. outstanding, and `docs/SEEDING.md` is the
+> live-cutover runbook.
 
 ## The golden rule
 
 **The scheduled Python jobs talk to the football API; the website only ever
 talks to our own database.** No third-party API call is ever triggered by a
 visitor. The web layer and the Python layer meet **only** at the Supabase
-database (ARCHITECTURE.md §5, §6).
+database (docs/ARCHITECTURE.md §5, §6).
 
 ```
 API-Football ──▶ Python jobs ──▶ Supabase (write) ──▶ Next.js (read) ──▶ visitor
@@ -35,15 +38,20 @@ API-Football ──▶ Python jobs ──▶ Supabase (write) ──▶ Next.js 
 ```
 src/
   app/                     App Router routes (see below) + sitemap.ts, robots.ts
-  components/              Header, Footer, DisclaimerBanner, MatchCard,
-                           ProbabilityBar, AdSlot
+  components/              Hand-built RSC + Tailwind: Header, Footer,
+                           DisclaimerBanner, ProbabilityBar, MatchCard, ledger/
+                           and match/ and home/ presentational components, AdSlot
+                           (built-ready, renders nothing in v1)
   lib/                     supabaseClient (anon, read-only), supabaseAdmin
-                           (service-role, server-only), types.ts, constants.ts
-jobs/                      Python scheduled jobs (the only DB writers)
-ARCHITECTURE.md            Single source of truth
+                           (service-role, server-only, guarded), queries/ (the
+                           server-only read layer), types.ts, format.ts, constants.ts
+jobs/                      Python scheduled jobs (the only DB writers) — see jobs/README.md
+supabase/migrations/       Schema, the ledger immutability trigger, RLS
+e2e/                       Playwright smoke + axe specs
+docs/                      ARCHITECTURE.md, DESIGN.md, STATUS.md, SEEDING.md
 ```
 
-### Routes (ARCHITECTURE.md §11)
+### Routes (docs/ARCHITECTURE.md §11)
 
 | Route | Purpose |
 |---|---|
@@ -56,8 +64,11 @@ ARCHITECTURE.md            Single source of truth
 | `/responsible-gambling` | 18+, signposting to support resources |
 | `/sitemap.xml`, `/robots.txt` | SEO (generated) |
 
-Pages are placeholders with clearly-marked `TODO` stubs that cite the relevant
-ARCHITECTURE.md section; the data pipeline that fills them is the next session.
+All routes are built and read live from Supabase (ISR, zero client JS); the
+in-house Elo and any voided predictions are never surfaced. The one remaining
+placeholder is `/responsible-gambling`, whose support links await
+launch-time confirmation and legal sign-off. See `docs/STATUS.md` for the full
+built-vs-outstanding breakdown.
 
 ## Local setup — web
 
@@ -80,13 +91,14 @@ Other scripts: `npm run build`, `npm run start`, `npm run lint`.
 | `NEXT_PUBLIC_SITE_URL` | public | Deployed base URL (metadata/OG/sitemap) |
 
 Secrets live only in the environment — never in the client bundle or the repo
-(ARCHITECTURE.md §12). All `.env*` files are git-ignored except the `*.example`
+(docs/ARCHITECTURE.md §12). All `.env*` files are git-ignored except the `*.example`
 templates.
 
 ## Local setup — jobs
 
-See [`jobs/README.md`](./jobs/README.md). The scoring maths is implemented and
-unit-tested:
+See [`jobs/README.md`](./jobs/README.md). The four-job pipeline, the scoring
+maths, and both dev tools are implemented and unit-tested (106 pytest tests,
+mocked — no network, no DB):
 
 ```bash
 cd jobs
@@ -98,14 +110,14 @@ python -m pytest tests -q
 ## Database
 
 Schema, the prediction-ledger immutability trigger, and Row Level Security are
-defined per ARCHITECTURE.md §7 and applied to the Supabase project via the
+defined per docs/ARCHITECTURE.md §7 and applied to the Supabase project via the
 Supabase MCP. The anon/public role is read-only; only the service role (the
 Python jobs) may write.
 
 ## Compliance
 
 This is a football **analysis** product, not a gambling operator and not betting
-advice (ARCHITECTURE.md §13). The disclaimer *"Analysis and probabilities only —
+advice (docs/ARCHITECTURE.md §13). The disclaimer *"Analysis and probabilities only —
 not betting advice. 18+. Please gamble responsibly."* is baked into the base
 layout and appears on every page. Plain-text team names only — no crests,
 badges, player photos, or official tournament marks.
