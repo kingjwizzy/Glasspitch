@@ -168,3 +168,21 @@ export interface FixtureInsight {
   source: string;
   fetched_at: string;
 }
+
+// ── v3 top scorers / Golden Boot (DESIGN.md §4 home item 5) ────────────────
+// Written by the Python jobs, anon-readable like fixtures/predictions (§5, §7).
+// The table is expected to be EMPTY until the job first runs — every read
+// degrades to an honest empty state, never a thrown error, for "no rows yet".
+export interface TopScorer {
+  league_id: number;
+  api_player_id: number;
+  player_name: string;
+  /** Plain text only — no crests/badges (ARCHITECTURE.md §13). */
+  team_name: string;
+  nationality: string | null;
+  goals: number;
+  assists: number | null;
+  penalties: number | null;
+  rank: number;
+  updated_at: string;
+}

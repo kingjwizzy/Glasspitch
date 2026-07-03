@@ -52,7 +52,15 @@ export default function AboutPage() {
           simple in-house Elo rating so we can compare the two over time and only
           promote our own model if it earns its place on the scored record.
           Predictions are scored with proper scoring rules — the multiclass Brier
-          score and log loss — plus a calibration check.
+          score and log loss — plus a calibration check. For the full detail,
+          including the exact formulas and how to audit any single call, see our{' '}
+          <Link
+            href="/methodology"
+            className="text-green underline transition-colors hover:text-green-bright"
+          >
+            methodology
+          </Link>
+          .
         </p>
       </section>
 

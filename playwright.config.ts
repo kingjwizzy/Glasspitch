@@ -50,6 +50,16 @@ export default defineConfig({
       PREVIEW_MATCH: '1',
       PREVIEW_TEAM: '1',
       PREVIEW_LEAGUE: '1',
+      // v3 "full site" round: /matches (src/lib/queries/matches.ts) gets the
+      // same deterministic-preview treatment as the other primary DB-backed
+      // surfaces above, so its day-grouping/probability-bar assertions
+      // (e2e/full-site.spec.ts) don't depend on whatever the live tournament
+      // schedule happens to be on the day the suite runs. /leagues and
+      // /stats/golden-boot deliberately have NO preview hatch of their own
+      // (they degrade to an honest empty state on any backing-store
+      // condition), so they run against whichever real Supabase project this
+      // build's .env.local points at.
+      PREVIEW_MATCHES: '1',
       // v2 premium (e2e/premium.spec.ts): fake-but-well-formed test-mode
       // values so /premium renders its REAL £4/£29 Checkout buttons instead
       // of the "not switched on yet" fallback (src/lib/stripe/plans.ts's

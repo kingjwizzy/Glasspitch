@@ -441,6 +441,85 @@ class SupabaseStore:
         )
         return res.data[0]["fixture_id"] if res.data else None
 
+    # ----- top_scorers (jobs/fetch_topscorers.py) -- PUBLIC data, same access
+    # class as leagues/teams/fixtures (migration 0005), not premium -----------
+    def league_id_for_api_league_id(self, api_league_id: int) -> Optional[int]:
+        """Resolve the internal ``leagues.id`` for a tracked API league id.
+
+        fetch_topscorers.py never upserts a league itself (that's
+        fetch_fixtures.py's job) -- a league that hasn't been synced yet
+        simply has no top-scorers row written for it this run (returns
+        ``None``; the caller skips it, isolated per league like
+        fetch_fixtures' per-league try/except).
+        """
+        rows = (
+            self._client.table("leagues")
+            .select("id")
+            .eq("api_league_id", api_league_id)
+            .execute()
+            .data
+        )
+        return rows[0]["id"] if rows else None
+
+    def replace_top_scorers(self, *, league_id: int, rows: list[dict]) -> dict:
+        """Idempotent full-replace of one league's top-scorers leaderboard.
+
+        Upserts every incoming row keyed on the (league_id, api_player_id)
+        PRIMARY KEY -- an unchanged rank/stat line is a plain no-op UPDATE --
+        then deletes any EXISTING row for this league whose ``api_player_id``
+        is NOT in the new set: a player who has fallen out of the top N
+        (overtaken, or transferred out of a tracked league) must not linger on
+        the board forever. Unlike the predictions LEDGER, this table carries
+        no immutability guarantee and no historical record to protect -- it is
+        a live leaderboard, not a scored record -- so pruning here is safe and
+        correct in a way it never would be on ``predictions``.
+
+        Upsert-then-prune (rather than delete-then-insert) also means the
+        leaderboard is never observably empty for this league between the two
+        steps: every row that is still current is written before any stale
+        row is removed.
+        """
+        if not rows:
+            return {"upserted": 0, "pruned": 0}
+
+        payload = [{**row, "league_id": league_id} for row in rows]
+        self._client.table("top_scorers").upsert(
+            payload, on_conflict="league_id,api_player_id"
+        ).execute()
+
+        keep_ids = {row["api_player_id"] for row in rows}
+        existing = (
+            self._client.table("top_scorers")
+            .select("api_player_id")
+            .eq("league_id", league_id)
+            .execute()
+            .data
+        )
+        stale_ids = [
+            r["api_player_id"] for r in existing if r["api_player_id"] not in keep_ids
+        ]
+        pruned = 0
+        if stale_ids:
+            self._client.table("top_scorers").delete().eq(
+                "league_id", league_id
+            ).in_("api_player_id", stale_ids).execute()
+            pruned = len(stale_ids)
+
+        return {"upserted": len(rows), "pruned": pruned}
+
+    def top_scorers_for_league(self, league_id: int) -> list[dict]:
+        """Top scorers for one league ordered by rank -- the read the WEB
+        mirrors directly via supabase-js (frontend-dev owns ``src/``); kept
+        here too so a job (or a future dry-run diff/verification script) can
+        read back what's stored without inventing a second query shape.
+        """
+        return self._paginated(
+            lambda: self._client.table("top_scorers")
+            .select("*")
+            .eq("league_id", league_id)
+            .order("rank")
+        )
+
     def published_predictions_due(self, now_iso: str) -> list[dict]:
         return self._paginated(
             lambda: self._client.table("predictions")

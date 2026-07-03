@@ -11,6 +11,17 @@
 // this whole file from the live DB once that migration is applied — at that
 // point this hand-written block should be replaced by the generator's output,
 // not merged with it.
+//
+// HAND-EXTENDED (2026-07-03, v3): `top_scorers` (Golden Boot standings) is
+// likewise added by hand, matching the migration the backend-jobs lane is
+// landing concurrently this round — league_id FK, api_player_id, player_name,
+// team_name, nationality, goals, assists, penalties, rank, updated_at; PK
+// (league_id, api_player_id); anon-readable like fixtures. The FK constraint
+// name below (`top_scorers_league_id_fkey`) follows this schema's existing
+// `<table>_<column>_fkey` convention but is NOT verified against the live
+// migration — the web queries deliberately avoid depending on this exact
+// constraint name (see lib/queries/goldenBoot.ts), so a mismatch degrades to
+// an honest empty state rather than a broken build.
 
 export type Json =
   | string
@@ -338,6 +349,54 @@ export type Database = {
             columns: ["fixture_id"]
             isOneToOne: false
             referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      // ── v3 stats table (hand-extended — see file header note) ──────────
+      top_scorers: {
+        Row: {
+          league_id: number
+          api_player_id: number
+          player_name: string
+          team_name: string
+          nationality: string
+          goals: number
+          assists: number
+          penalties: number
+          rank: number
+          updated_at: string
+        }
+        Insert: {
+          league_id: number
+          api_player_id: number
+          player_name: string
+          team_name: string
+          nationality: string
+          goals?: number
+          assists?: number
+          penalties?: number
+          rank: number
+          updated_at?: string
+        }
+        Update: {
+          league_id?: number
+          api_player_id?: number
+          player_name?: string
+          team_name?: string
+          nationality?: string
+          goals?: number
+          assists?: number
+          penalties?: number
+          rank?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "top_scorers_league_id_fkey"
+            columns: ["league_id"]
+            isOneToOne: false
+            referencedRelation: "leagues"
             referencedColumns: ["id"]
           },
         ]

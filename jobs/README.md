@@ -26,6 +26,7 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
 | `score_results.py` | **Frequent around match end.** Scores the self-draining `locked` set via `scoring.py` (§8.4, §10). |
 | `fetch_insights.py` | **v2, new (suggested cadence: every 30–60 min).** One `/fixtures/statistics` fetch per finished+scored fixture without a `post_match_stats` insight yet (most-recently-finished first); curates xG/shots/possession/cards/passes per side into `fixture_insights` (migration 0004). Premium depth content — never the free ledger. |
+| `fetch_topscorers.py` | **New (daily, e.g. 07:30 UTC).** One `/players/topscorers` fetch per tracked league; top 15 by rank, idempotent full-replace into `top_scorers` (migration 0005). **Public** data — same access class as `leagues`/`teams`/`fixtures`, not premium. |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
 
@@ -77,6 +78,23 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   fixture with no statistics yet from the provider is skipped and retried next
   run. Isolated per fixture like `fetch_predictions`' API pass (one bad fixture
   logs + continues; `RequestBudgetExceeded` ends the run early and gracefully).
+- **`fetch_topscorers`** — for each tracked league (`config.TRACKED_LEAGUE_IDS`):
+  resolves the internal `leagues.id` for that `api_league_id` first (a league
+  `fetch_fixtures` hasn't synced yet is skipped with **no API call spent**),
+  then `GET /players/topscorers?league={api_league_id}&season={SEASON}`
+  **once per league per run**. Parses up to `config.TOP_SCORERS_LIMIT` (15)
+  entries — `rank` is just the API's list order (already sorted by goals
+  desc) — keeping only plain-text fields (`player_name`, `team_name`,
+  `nationality`) plus `goals`/`assists`/`penalties`; the payload's player
+  photo and team logo URLs are never read, let alone stored (§13). Writes via
+  `db.replace_top_scorers`: an idempotent **upsert-then-prune** per league —
+  every current row is upserted (keyed on `(league_id, api_player_id)`) before
+  any row for a player who has fallen out of the top 15 is deleted, so the
+  board is never observably empty mid-run. Unlike the predictions ledger,
+  `top_scorers` has no immutability guarantee to protect, so pruning stale
+  rows is safe. Isolated per league like `fetch_fixtures` (one bad league
+  logs + continues; `RequestBudgetExceeded` ends the run early and
+  gracefully).
 
 ## `--dry-run`
 
@@ -114,6 +132,7 @@ python -m jobs.fetch_predictions --dry-run
 python -m jobs.lock_predictions --dry-run
 python -m jobs.score_results --dry-run
 python -m jobs.fetch_insights --dry-run
+python -m jobs.fetch_topscorers --dry-run
 
 # for real (writes to the DB)
 python -m jobs.fetch_fixtures        # daily
@@ -121,6 +140,7 @@ python -m jobs.fetch_predictions     # daily
 python -m jobs.lock_predictions      # every ~10-15 min
 python -m jobs.score_results         # frequently around match end
 python -m jobs.fetch_insights        # v2 — every ~30-60 min (suggested; not yet in scheduler.yml)
+python -m jobs.fetch_topscorers      # daily (scheduler.yml: 07:30 UTC)
 ```
 
 Add `-v` for debug logging. Writes are idempotent (keyed on the `api_*` ids), so
@@ -130,7 +150,11 @@ re-running a job is safe (§5, §8).
 
 The free tier allows **100 requests/day**. `fetch_predictions` fetches each
 fixture's prediction **exactly once** and never re-fetches a stored one;
-`fetch_fixtures` makes one sweep per tracked league. `apiclient.py` counts
+`fetch_fixtures` makes one sweep per tracked league; `fetch_topscorers` makes
+one `/players/topscorers` call per tracked league per run (a full-replace, so
+it re-fetches daily by design — there's no "fetch once" for a leaderboard that
+changes as the tournament progresses, but it's still bounded to one request
+per tracked league). `apiclient.py` counts
 requests and a per-run guard (`MAX_REQUESTS_PER_RUN`, default 100) refuses to
 exceed the budget within a single run; the daily total stays low by the
 fetch-once design, not by cross-run accounting. Each job's summary logs

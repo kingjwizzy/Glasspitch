@@ -178,3 +178,59 @@ export async function getAllLeagueOptions(): Promise<LeagueOption[]> {
     return [];
   }
 }
+
+/** One competition card on the /leagues browse index (ARCHITECTURE.md §11 —
+ *  fixes the "no league browse path" audit finding). */
+export interface LeagueIndexItem {
+  name: string;
+  slug: string;
+  country: string;
+  season: number;
+  fixtureCount: number;
+}
+
+/**
+ * Every current-season league, with its fixture count, for the /leagues index
+ * (built to hold many competitions, even though v1 has one). Season-guarded
+ * (§5) and paginated (§8: an unbounded select is silently row-capped by
+ * PostgREST). The per-league fixture count is a separate bounded `count:
+ * 'exact', head: true` query rather than an embedded aggregate — this keeps
+ * the query independent of any particular fixtures→leagues FK constraint name
+ * and degrades a single failed count to 0 rather than failing the whole page.
+ * Returns [] on any error so the page can show its own honest empty state.
+ */
+export async function getLeaguesIndexData(): Promise<LeagueIndexItem[]> {
+  try {
+    const sb = getSupabaseClient();
+    const leagues = await paginate<RawLeagueRow>(async (from, to) => {
+      const { data, error } = await sb
+        .from('leagues')
+        .select('id, name, slug, country, season')
+        .gte('season', MIN_SEASON)
+        .order('name', { ascending: true })
+        .range(from, to);
+      if (error) return null;
+      return data;
+    });
+
+    const counts = await Promise.all(
+      leagues.map(async (l) => {
+        const { count, error } = await sb
+          .from('fixtures')
+          .select('id', { count: 'exact', head: true })
+          .eq('league_id', l.id);
+        return error ? 0 : (count ?? 0);
+      }),
+    );
+
+    return leagues.map((l, i) => ({
+      name: l.name,
+      slug: l.slug,
+      country: l.country,
+      season: l.season,
+      fixtureCount: counts[i] ?? 0,
+    }));
+  } catch {
+    return [];
+  }
+}

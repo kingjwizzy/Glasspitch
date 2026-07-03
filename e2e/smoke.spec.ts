@@ -69,10 +69,11 @@ test('/ has correct landmark structure and data-state-independent semantics', as
 
   // Heading order: h1 is present and unique; all labelled sections exist as h2.
   await expect(page.locator('h1')).toHaveCount(1);
-  // The five named sections each get a visible or sr-only h2 via SectionHeader
-  // or an inline element — at least four named h2s must be present.
+  // The six named sections (hero, upcoming, watching, recent calls, the v3
+  // Golden Boot race, and the running record) each get a visible or sr-only
+  // h2 via SectionHeader or an inline element.
   const namedSections = page.locator('section[aria-labelledby]');
-  await expect(namedSections).toHaveCount(5);
+  await expect(namedSections).toHaveCount(6);
 
   // ProbabilityBar uses role=img with a descriptive aria-label naming all three
   // outcomes (DESIGN.md §2: colour is never the sole signal). With preview data

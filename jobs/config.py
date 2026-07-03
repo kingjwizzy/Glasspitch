@@ -72,6 +72,11 @@ SEASON: int = int(os.environ.get("WC_SEASON") or str(LIVE_SEASON))
 # Number of recent matches to summarise for "form" on team/match pages (§4).
 FORM_MATCH_COUNT: int = 5
 
+# How many players fetch_topscorers.py keeps per league's leaderboard. The
+# /players/topscorers response is already ordered by goals desc; rank is
+# simply that list order, truncated here.
+TOP_SCORERS_LIMIT: int = 15
+
 # --- Model identifiers written into the predictions ledger (§7, §9) ----------
 THIRD_PARTY_MODEL_VERSION = "api-football-v1"
 THIRD_PARTY_SOURCE = "api-football"

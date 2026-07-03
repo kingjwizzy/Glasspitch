@@ -1,0 +1,14 @@
+{
+  "name": "Glass Pitch",
+  "short_name": "Glass Pitch",
+  "description": "Transparent football analysis — probabilities, predicted scores and a public, losses-included prediction ledger. Analysis, not betting advice.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0E1311",
+  "theme_color": "#0E1311",
+  "lang": "en-GB",
+  "icons": [
+    { "src": "/icon", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/apple-icon", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}

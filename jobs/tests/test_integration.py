@@ -28,17 +28,21 @@ RPC in a `finally` block, using a season number unique to that test run (see
 `_isolated_season`), so repeated runs against a persistent (non-CI) project
 never accumulate garbage and never collide with concurrent runs.
 
-These tests assume migrations 0001 -> 0004 are ALREADY applied to the target
-(CI's `supabase db reset` step does this before invoking `pytest -m
-integration`; a developer running this locally runs the same via the Supabase
-CLI). We don't re-apply the migration files ourselves -- instead, every
-0003-introduced object/behaviour (job_runs, 'void_cancelled', the DELETE
-guard, the extended freeze, teardown_season) AND every 0004-introduced
-object/behaviour (`profiles`/`subscriptions`/`stripe_events`/
-`fixture_insights`, `handle_new_user()`, `public.is_premium()`, and their RLS)
-is exercised directly, so a schema that DIDN'T migrate cleanly to 0004 fails
-these tests immediately (table/column/function/policy would not exist)
-rather than silently no-op'ing.
+These tests assume migrations 0001 -> 0005 are ALREADY applied to the target
+FROM SCRATCH (CI's `supabase db reset` step does this before invoking `pytest
+-m integration` -- it replays every file in supabase/migrations/ in order, so
+0005 is included automatically with no CI change needed; a developer running
+this locally runs the same via the Supabase CLI). We don't re-apply the
+migration files ourselves -- instead, every 0003-introduced object/behaviour
+(job_runs, 'void_cancelled', the DELETE guard, the extended freeze,
+teardown_season), every 0004-introduced object/behaviour
+(`profiles`/`subscriptions`/`stripe_events`/`fixture_insights`,
+`handle_new_user()`, `public.is_premium()`, and their RLS), AND 0005's
+`public.top_scorers` (public data, NOT premium -- anon/authenticated get a
+real SELECT, only service_role writes) is exercised directly, so a schema
+that DIDN'T migrate cleanly to 0005 fails these tests immediately
+(table/column/function/policy would not exist) rather than silently
+no-op'ing.
 
 v2 premium (0004) additions to this file create REAL `auth.users` rows via the
 service-role client's `auth.admin.create_user()`/`delete_user()` (the local
@@ -46,6 +50,13 @@ stack's GoTrue, started by `supabase start`) so RLS can be exercised as a
 genuinely authenticated user, not just anon vs. service-role -- every such
 test deletes the user(s) it creates in a `finally` block, which cascades
 (`on delete cascade`) through `profiles` and `subscriptions` automatically.
+
+0005 additions reuse `_seed_prediction`'s league (via `real_store.upsert_league`)
+and `teardown_season` for cleanup -- `top_scorers.league_id` has its own `on
+delete cascade` to `public.leagues (id)`, so deleting the league (one of
+teardown_season's own DELETE statements) removes any seeded top_scorers rows
+too, even though teardown_season's SQL body never mentions top_scorers by
+name.
 """
 
 from __future__ import annotations
@@ -628,4 +639,122 @@ def test_is_premium_excludes_a_subscription_past_its_current_period_end(
         assert rows == []
     finally:
         real_store._client.auth.admin.delete_user(user_id)
+        real_store.teardown_season(isolated_season)
+
+
+# ==============================================================================
+# migration 0005: public.top_scorers -- PUBLIC data (same access class as
+# leagues/teams/fixtures), NOT premium: anon/authenticated get a genuine
+# SELECT; only service_role may write.
+# ==============================================================================
+
+
+@requires_real_db
+def test_migration_0005_replace_top_scorers_round_trips_through_real_postgres(
+    real_store, isolated_season
+):
+    """Proves 0005 applied cleanly on top of 0001->0004: the table, its
+    (league_id, api_player_id) composite PK, the idx_top_scorers_league_rank
+    index and top_scorers_set_updated_at trigger all exist -- and
+    jobs.db.SupabaseStore.replace_top_scorers's upsert-then-prune round-trips
+    for real (unlike conftest.py's FakeSupabaseClient, this exercises the
+    ACTUAL composite conflict target and cascade, not a reimplementation)."""
+    league_id = real_store.upsert_league(
+        api_league_id=isolated_season, name=f"Integration League {isolated_season}",
+        slug=f"integration-league-{isolated_season}", country="Testland",
+        season=isolated_season,
+    )
+    try:
+        result = real_store.replace_top_scorers(
+            league_id=league_id,
+            rows=[
+                {
+                    "api_player_id": 1, "player_name": "Test Scorer One", "team_name": "Test FC",
+                    "nationality": "Testland", "goals": 10, "assists": 3, "penalties": 1, "rank": 1,
+                },
+                {
+                    "api_player_id": 2, "player_name": "Test Scorer Two", "team_name": "Test United",
+                    "nationality": None, "goals": 8, "assists": None, "penalties": None, "rank": 2,
+                },
+            ],
+        )
+        assert result == {"upserted": 2, "pruned": 0}
+
+        rows = real_store.top_scorers_for_league(league_id)
+        assert [r["rank"] for r in rows] == [1, 2]
+        assert rows[0]["player_name"] == "Test Scorer One"
+        assert "photo" not in rows[0] and "logo" not in rows[0]  # no such columns exist at all
+
+        # Idempotent replace: player 1 falls out of the board -- upsert-then-
+        # prune removes them without touching player 2's row (updated in place).
+        result2 = real_store.replace_top_scorers(
+            league_id=league_id,
+            rows=[
+                {
+                    "api_player_id": 2, "player_name": "Test Scorer Two", "team_name": "Test United",
+                    "nationality": None, "goals": 9, "assists": None, "penalties": None, "rank": 1,
+                },
+            ],
+        )
+        assert result2 == {"upserted": 1, "pruned": 1}
+        remaining = real_store.top_scorers_for_league(league_id)
+        assert len(remaining) == 1
+        assert remaining[0]["api_player_id"] == 2
+        assert remaining[0]["goals"] == 9  # updated, not re-inserted as a new row
+    finally:
+        real_store.teardown_season(isolated_season)
+
+    # Cascade proof: teardown_season's own DELETE statements never mention
+    # top_scorers by name -- the league's ON DELETE CASCADE FK does the work.
+    leftover = (
+        real_store._client.table("top_scorers").select("api_player_id")
+        .eq("league_id", league_id).execute().data
+    )
+    assert leftover == []
+
+
+@requires_real_db
+def test_anon_can_select_top_scorers_but_cannot_write(real_store, isolated_season):
+    """top_scorers is PUBLIC data (unlike the 0004 premium/billing tables one
+    section up): anon gets a genuine, populated SELECT -- not merely an
+    empty/filtered result -- but every write path (insert/update/delete)
+    stays denied exactly like leagues/teams/fixtures."""
+    anon_client = _anon_client_or_skip()
+
+    league_id = real_store.upsert_league(
+        api_league_id=isolated_season, name=f"Integration League {isolated_season}",
+        slug=f"integration-league-{isolated_season}", country="Testland",
+        season=isolated_season,
+    )
+    try:
+        real_store.replace_top_scorers(
+            league_id=league_id,
+            rows=[
+                {
+                    "api_player_id": 1, "player_name": "Anon Read Test", "team_name": "Test FC",
+                    "nationality": "Testland", "goals": 5, "assists": 1, "penalties": 0, "rank": 1,
+                },
+            ],
+        )
+
+        rows = (
+            anon_client.table("top_scorers").select("*").eq("league_id", league_id).execute().data
+        )
+        assert len(rows) == 1
+        assert rows[0]["player_name"] == "Anon Read Test"
+
+        with pytest.raises(Exception):
+            anon_client.table("top_scorers").insert(
+                {
+                    "league_id": league_id, "api_player_id": 999, "player_name": "Hacker",
+                    "team_name": "Nowhere FC", "goals": 100, "rank": 1,
+                }
+            ).execute()
+        with pytest.raises(Exception):
+            anon_client.table("top_scorers").update({"goals": 999}).eq(
+                "league_id", league_id
+            ).execute()
+        with pytest.raises(Exception):
+            anon_client.table("top_scorers").delete().eq("league_id", league_id).execute()
+    finally:
         real_store.teardown_season(isolated_season)

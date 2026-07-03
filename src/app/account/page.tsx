@@ -65,7 +65,7 @@ export default async function AccountPage() {
                 href="/premium"
                 className="text-green underline transition-colors hover:text-green-bright"
               >
-                see what Premium adds
+                Premium — test mode preview
               </Link>
               .
             </p>

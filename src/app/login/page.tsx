@@ -29,11 +29,31 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </h1>
         <p className="text-sm leading-relaxed text-fg-dim">
           Enter your email and we&rsquo;ll send you a one-time link — no
-          password to remember. This is only needed for a Glass Pitch Premium
-          account; every prediction and the full ledger stay free and public
-          without signing in at all.
+          password to remember. Every prediction and the full ledger stay free
+          and public whether or not you sign in.
         </p>
       </header>
+
+      <section className="space-y-2 rounded-2xl border border-line bg-surface p-4">
+        <h2 className="text-sm font-medium text-fg">
+          What a Glass Pitch account is for, today
+        </h2>
+        <ul className="space-y-1.5 text-sm leading-relaxed text-fg-dim">
+          <li>
+            Managing a Glass Pitch Premium subscription (currently a test-mode
+            preview — see{' '}
+            <a
+              href="/premium"
+              className="text-green underline transition-colors hover:text-green-bright"
+            >
+              what it adds
+            </a>
+            ).
+          </li>
+          <li>No newsletter or marketing email yet — we don&rsquo;t send any.</li>
+          <li>No password: we email a one-time link, nothing else.</li>
+        </ul>
+      </section>
 
       <LoginForm next={safeNext} />
     </article>

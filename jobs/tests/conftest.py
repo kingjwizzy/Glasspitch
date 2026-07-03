@@ -29,12 +29,27 @@ class FakeStore:
     # that never thought about the kickoff window still passes unchanged.
     DEFAULT_NOW = "2026-06-11T12:00:00+00:00"
 
-    def __init__(self, *, upcoming=None, finished=None, predictions=None, insights=None, now=None):
+    def __init__(
+        self,
+        *,
+        upcoming=None,
+        finished=None,
+        predictions=None,
+        insights=None,
+        now=None,
+        leagues=None,
+        top_scorers=None,
+    ):
         self._upcoming = list(upcoming or [])
         self._finished = list(finished or [])
         self.predictions = [dict(p) for p in (predictions or [])]
         self.insights: list[dict] = [dict(i) for i in (insights or [])]
         self._now = util.parse_iso(now) if now else util.parse_iso(self.DEFAULT_NOW)
+        # {api_league_id: internal league_id} -- jobs.fetch_topscorers.py's
+        # league_id_for_api_league_id lookup. Absent by default: a league not
+        # explicitly seeded here mirrors "fetch_fixtures hasn't synced it yet".
+        self._leagues: dict[int, int] = dict(leagues or {})
+        self.top_scorers: list[dict] = [dict(r) for r in (top_scorers or [])]
         # recorded writes
         self.upserted_leagues: list[dict] = []
         self.upserted_teams: list[dict] = []
@@ -44,6 +59,7 @@ class FakeStore:
         self.voided: list[str] = []
         self.closed_terminal: list[int] = []
         self.scored: list[dict] = []
+        self.replace_top_scorers_calls: list[dict] = []
         self._seq = 0
 
     # ----- reads -----
@@ -75,6 +91,52 @@ class FakeStore:
 
     def existing_prediction_fixture_ids(self, source):
         return {p["fixture_id"] for p in self.predictions if p["source"] == source}
+
+    # ----- top_scorers (jobs/fetch_topscorers.py, migration 0005) -- mirrors
+    # jobs.db.SupabaseStore's upsert-then-prune semantics exactly, so job-level
+    # tests exercise the real idempotency contract, not a simplified stand-in.
+    def league_id_for_api_league_id(self, api_league_id):
+        return self._leagues.get(api_league_id)
+
+    def replace_top_scorers(self, *, league_id, rows):
+        self.replace_top_scorers_calls.append(
+            {"league_id": league_id, "rows": [dict(r) for r in rows]}
+        )
+        if not rows:
+            return {"upserted": 0, "pruned": 0}
+
+        keep_ids = set()
+        for row in rows:
+            keep_ids.add(row["api_player_id"])
+            existing = next(
+                (
+                    r
+                    for r in self.top_scorers
+                    if r["league_id"] == league_id and r["api_player_id"] == row["api_player_id"]
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(row)
+            else:
+                new_row = dict(row)
+                new_row["league_id"] = league_id
+                self.top_scorers.append(new_row)
+
+        stale = [
+            r
+            for r in self.top_scorers
+            if r["league_id"] == league_id and r["api_player_id"] not in keep_ids
+        ]
+        for r in stale:
+            self.top_scorers.remove(r)
+
+        return {"upserted": len(rows), "pruned": len(stale)}
+
+    def top_scorers_for_league(self, league_id):
+        rows = [dict(r) for r in self.top_scorers if r["league_id"] == league_id]
+        rows.sort(key=lambda r: r["rank"])
+        return rows
 
     # ----- v2 premium: fixture_insights (mirrors jobs.db.SupabaseStore) -------
     def existing_insight_fixture_ids(self, kind):
@@ -286,6 +348,9 @@ class FakeApiClient:
       error-isolation tests for fetch_predictions.
     ``statistics``: {api_fixture_id: payload_or_exception}; same convention as
       ``predictions`` -- per-fixture error-isolation tests for fetch_insights.
+    ``topscorers``: {api_league_id: payload_or_exception}; same convention as
+      ``predictions``/``statistics`` -- per-league error-isolation tests for
+      fetch_topscorers.
     """
 
     def __init__(
@@ -296,16 +361,19 @@ class FakeApiClient:
         fixtures_by_league=None,
         predictions=None,
         statistics=None,
+        topscorers=None,
     ):
         self._fixtures = fixtures if fixtures is not None else {"response": []}
         self._fixtures_pages = fixtures_pages
         self._fixtures_by_league = fixtures_by_league or {}
         self._predictions = predictions or {}  # api_fixture_id -> payload | Exception
         self._statistics = statistics or {}  # api_fixture_id -> payload | Exception
+        self._topscorers = topscorers or {}  # api_league_id -> payload | Exception
         self.request_count = 0
         self.fixture_calls: list[tuple[int, int, int]] = []
         self.prediction_calls: list[int] = []
         self.statistics_calls: list[int] = []
+        self.topscorers_calls: list[tuple[int, int]] = []
 
     def get_fixtures(self, league, season, *, page=1):
         self.request_count += 1
@@ -340,6 +408,14 @@ class FakeApiClient:
             raise entry
         return entry
 
+    def get_topscorers(self, league, season):
+        self.request_count += 1
+        self.topscorers_calls.append((league, season))
+        entry = self._topscorers.get(league, {"response": []})
+        if isinstance(entry, BaseException):
+            raise entry
+        return entry
+
 
 class _FakeQuery:
     """Minimal stand-in for the supabase-py query builder.
@@ -358,8 +434,11 @@ class _FakeQuery:
         self._filters: list[tuple[str, str, object]] = []
         self._update_values: dict | None = None
         self._insert_rows: list[dict] | None = None
-        self._upsert_row: dict | None = None
+        self._upsert_rows: list[dict] | None = None
         self._on_conflict: str | None = None
+        self._order_col: str | None = None
+        self._order_desc: bool = False
+        self._range: tuple[int, int] | None = None
 
     def select(self, *cols):
         self._op = "select"
@@ -380,8 +459,13 @@ class _FakeQuery:
         return self
 
     def upsert(self, row, on_conflict=None):
+        """Accepts either a single dict row OR a list of dict rows -- the
+        latter is what a real batch upsert (e.g. jobs.db.SupabaseStore's
+        replace_top_scorers) sends. ``on_conflict`` may name more than one
+        column, comma-separated (e.g. "league_id,api_player_id") -- the
+        composite key is matched as a tuple, not a single literal column."""
         self._op = "upsert"
-        self._upsert_row = dict(row)
+        self._upsert_rows = [dict(row)] if isinstance(row, dict) else [dict(r) for r in row]
         self._on_conflict = on_conflict
         return self
 
@@ -391,6 +475,15 @@ class _FakeQuery:
 
     def in_(self, col, values):
         self._filters.append(("in", col, list(values)))
+        return self
+
+    def order(self, col, *, desc=False):
+        self._order_col = col
+        self._order_desc = desc
+        return self
+
+    def range(self, start, end):
+        self._range = (start, end)
         return self
 
     def _matches(self, row) -> bool:
@@ -406,6 +499,11 @@ class _FakeQuery:
 
         if self._op == "select":
             matched = [r for r in rows if self._matches(r)]
+            if self._order_col is not None:
+                matched.sort(key=lambda r: r.get(self._order_col), reverse=self._order_desc)
+            if self._range is not None:
+                start, end = self._range
+                matched = matched[start : end + 1]
             return SimpleNamespace(data=[dict(r) for r in matched])
 
         if self._op == "delete":
@@ -430,19 +528,23 @@ class _FakeQuery:
             return SimpleNamespace(data=[dict(r) for r in inserted])
 
         if self._op == "upsert":
-            conflict_col = self._on_conflict or "id"
-            existing = next(
-                (r for r in rows if r.get(conflict_col) == self._upsert_row.get(conflict_col)),
-                None,
-            )
-            if existing is not None:
-                existing.update(self._upsert_row)
-                result_row = existing
-            else:
-                result_row = dict(self._upsert_row)
-                result_row.setdefault("id", len(rows) + 1)
-                rows.append(result_row)
-            return SimpleNamespace(data=[dict(result_row)])
+            conflict_cols = (self._on_conflict or "id").split(",")
+            result_rows = []
+            for upsert_row in self._upsert_rows:
+                key = tuple(upsert_row.get(c) for c in conflict_cols)
+                existing = next(
+                    (r for r in rows if tuple(r.get(c) for c in conflict_cols) == key),
+                    None,
+                )
+                if existing is not None:
+                    existing.update(upsert_row)
+                    result_rows.append(existing)
+                else:
+                    result_row = dict(upsert_row)
+                    result_row.setdefault("id", len(rows) + len(result_rows) + 1)
+                    rows.append(result_row)
+                    result_rows.append(result_row)
+            return SimpleNamespace(data=[dict(r) for r in result_rows])
 
         raise NotImplementedError(f"_FakeQuery: unsupported op {self._op!r}")
 
@@ -470,13 +572,23 @@ class FakeSupabaseClient:
     ``.rpc(name, params)`` invocation.
     """
 
-    def __init__(self, *, leagues=None, teams=None, fixtures=None, predictions=None, job_runs=None):
+    def __init__(
+        self,
+        *,
+        leagues=None,
+        teams=None,
+        fixtures=None,
+        predictions=None,
+        job_runs=None,
+        top_scorers=None,
+    ):
         self.tables: dict[str, list[dict]] = {
             "leagues": [dict(r) for r in (leagues or [])],
             "teams": [dict(r) for r in (teams or [])],
             "fixtures": [dict(r) for r in (fixtures or [])],
             "predictions": [dict(r) for r in (predictions or [])],
             "job_runs": [dict(r) for r in (job_runs or [])],
+            "top_scorers": [dict(r) for r in (top_scorers or [])],
         }
         self.delete_log: list[str] = []
         self.rpc_calls: list[tuple[str, dict]] = []
@@ -773,6 +885,69 @@ def statistics_payload():
                 "statistics": [
                     {"type": "Ball Possession", "value": "45%"},
                     {"type": "expected_goals", "value": "1.1"},
+                ],
+            },
+        ]
+    }
+
+
+@pytest.fixture
+def topscorers_payload():
+    """A realistic API-Football /players/topscorers payload
+    (jobs/fetch_topscorers.py) -- already ordered by goals desc, exactly like
+    the real endpoint. Each item deliberately carries a player.photo and a
+    team.logo URL, exactly as the real API does, so tests can prove those
+    fields are present in the raw payload but never read into a stored row
+    (§13 -- plain text/numeric fields only). The third entry omits
+    nationality/assists/penalties entirely, proving those nullable fields
+    degrade to ``None`` rather than raising."""
+    return {
+        "response": [
+            {
+                "player": {
+                    "id": 306,
+                    "name": "Bruno Fernandes",
+                    "nationality": "Portugal",
+                    "photo": "https://media.api-sports.io/football/players/306.png",
+                },
+                "statistics": [
+                    {
+                        "team": {
+                            "id": 33,
+                            "name": "Portugal",
+                            "logo": "https://media.api-sports.io/football/teams/33.png",
+                        },
+                        "goals": {"total": 7, "assists": 3},
+                        "penalty": {"scored": 1},
+                    }
+                ],
+            },
+            {
+                "player": {
+                    "id": 874,
+                    "name": "Kylian Mbappe",
+                    "nationality": "France",
+                    "photo": "https://media.api-sports.io/football/players/874.png",
+                },
+                "statistics": [
+                    {
+                        "team": {
+                            "id": 2,
+                            "name": "France",
+                            "logo": "https://media.api-sports.io/football/teams/2.png",
+                        },
+                        "goals": {"total": 6, "assists": None},
+                        "penalty": {"scored": 0},
+                    }
+                ],
+            },
+            {
+                "player": {"id": 91, "name": "New Talent", "photo": None},
+                "statistics": [
+                    {
+                        "team": {"id": 7, "name": "Testland", "logo": None},
+                        "goals": {"total": 4},
+                    },
                 ],
             },
         ]

@@ -29,6 +29,14 @@ export default function Footer() {
             </li>
             <li>
               <Link
+                href="/stats/golden-boot"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Golden Boot
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/responsible-gambling"
                 className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
               >

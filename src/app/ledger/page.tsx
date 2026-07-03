@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
 import LedgerTable from '@/components/ledger/LedgerTable';
@@ -68,7 +69,14 @@ export default async function LedgerPage() {
         <p className="mt-2 max-w-prose text-sm leading-relaxed text-fg-dim">
           Our identity is radical transparency. Every prediction is timestamped,
           locked at kickoff, and scored properly after full-time — wins and
-          losses alike. The misses stay visible, permanently.
+          losses alike. The misses stay visible, permanently. See our{' '}
+          <Link
+            href="/methodology"
+            className="text-green underline transition-colors hover:text-green-bright"
+          >
+            methodology
+          </Link>{' '}
+          for exactly how these numbers are computed.
         </p>
       </header>
 

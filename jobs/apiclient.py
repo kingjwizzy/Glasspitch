@@ -169,3 +169,9 @@ class ApiFootballClient:
         ARCHITECTURE.md v2 §4/§7/§8) -- per-team shot/possession/card/xG
         counters, fetched exactly once per fixture like /predictions."""
         return self.get("/fixtures/statistics", {"fixture": fixture})
+
+    def get_topscorers(self, league: int, season: int) -> dict[str, Any]:
+        """GET /players/topscorers for one league/season (jobs/fetch_topscorers.py)
+        -- one request per tracked league per run; the response is already
+        ordered by goals desc (rank = list order)."""
+        return self.get("/players/topscorers", {"league": league, "season": season})

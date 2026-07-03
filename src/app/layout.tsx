@@ -1,5 +1,6 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Archivo, Hanken_Grotesk, IBM_Plex_Mono } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
@@ -59,6 +60,24 @@ export const metadata: Metadata = {
     description: DEFAULT_DESCRIPTION,
   },
   robots: { index: true, follow: true },
+  // PWA-lite (DESIGN.md §8): installable, fast repeat loads. Icons themselves
+  // are wired automatically by the app/icon.tsx + app/apple-icon.tsx file
+  // conventions; this just points at the manifest.
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: SITE_NAME,
+  },
+};
+
+// Separate from `metadata` per the Next.js viewport API — theme-color must be
+// set here, not in `metadata` (DESIGN.md §2 `--bg` token, matching the
+// manifest's background/theme colour so the browser chrome and the installed
+// app never mismatch the page itself).
+export const viewport: Viewport = {
+  themeColor: '#0E1311',
+  colorScheme: 'dark',
 };
 
 export default function RootLayout({
@@ -91,6 +110,13 @@ export default function RootLayout({
           {children}
         </main>
         <Footer />
+        {/* Cookieless Vercel Web Analytics (ARCHITECTURE.md §12) — no consent
+            banner required; this is the only client script this layout adds.
+            Rendered only when the build actually runs on Vercel: the script it
+            injects (/_vercel/insights/script.js) is served by Vercel's edge, so
+            in a locally-served production build (the E2E webServer) it 404s and
+            trips the "no console errors" gate. */}
+        {process.env.VERCEL ? <Analytics /> : null}
       </body>
     </html>
   );

@@ -7,7 +7,9 @@ import UpcomingFixtures from '@/components/home/UpcomingFixtures';
 import WhatWeAreWatching from '@/components/home/WhatWeAreWatching';
 import RecentCalls from '@/components/home/RecentCalls';
 import RecordBand from '@/components/home/RecordBand';
+import GoldenBootRace from '@/components/home/GoldenBootRace';
 import { getHomepageData } from '@/lib/queries/homepage';
+import { getGoldenBootTop5 } from '@/lib/queries/goldenBoot';
 import { SITE_NAME } from '@/lib/constants';
 
 // `title.template` (`%s · Glass Pitch`, defined in the root layout) applies only
@@ -42,8 +44,10 @@ export const metadata: Metadata = {
 export const revalidate = 600;
 
 export default async function HomePage() {
-  const { hero, upcoming, watching, recentCalls, record } =
-    await getHomepageData();
+  const [{ hero, upcoming, watching, recentCalls, record }, goldenBoot] = await Promise.all([
+    getHomepageData(),
+    getGoldenBootTop5(),
+  ]);
   const heroHeading = hero?.status === 'live' ? 'Live now' : 'Next match';
 
   return (
@@ -110,6 +114,16 @@ export default async function HomePage() {
           linkLabel="Full record"
         />
         <RecentCalls calls={recentCalls} />
+      </section>
+
+      <section aria-labelledby="golden-boot-heading">
+        <SectionHeader
+          id="golden-boot-heading"
+          title="Golden Boot race"
+          href="/stats/golden-boot"
+          linkLabel="Full standings"
+        />
+        <GoldenBootRace scorers={goldenBoot} />
       </section>
 
       <section aria-labelledby="record-heading">

@@ -7,10 +7,10 @@ import FixtureRow from '@/components/FixtureRow';
 
 export default function FixtureList({
   fixtures,
-  emptyMessage,
+  emptyMessage = 'No fixtures yet.',
 }: {
   fixtures: FixtureRowView[];
-  emptyMessage: string;
+  emptyMessage?: string;
 }) {
   if (fixtures.length === 0) {
     return (

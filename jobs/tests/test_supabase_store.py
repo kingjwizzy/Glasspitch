@@ -284,6 +284,137 @@ def test_record_job_run_inserts_expected_row(make_supabase_client):
     assert row["finished_at"] == "2026-06-11T10:00:05+00:00"
 
 
+# --- top_scorers (jobs/fetch_topscorers.py, migration 0005) -----------------
+# Runs the REAL SupabaseStore.replace_top_scorers/league_id_for_api_league_id/
+# top_scorers_for_league against FakeSupabaseClient -- exercises the actual
+# batch-upsert (list-of-dicts, composite "league_id,api_player_id" conflict
+# target) and paginated-order read path, not just FakeStore's job-level
+# reimplementation (test_fetch_topscorers.py covers that layer separately).
+
+
+def test_league_id_for_api_league_id_resolves_a_synced_league(make_supabase_client):
+    client = make_supabase_client(leagues=[{"id": 100, "api_league_id": 1}])
+    store = SupabaseStore(client=client)
+
+    assert store.league_id_for_api_league_id(1) == 100
+
+
+def test_league_id_for_api_league_id_returns_none_when_unsynced(make_supabase_client):
+    client = make_supabase_client(leagues=[])
+    store = SupabaseStore(client=client)
+
+    assert store.league_id_for_api_league_id(999) is None
+
+
+def test_replace_top_scorers_upserts_new_rows(make_supabase_client):
+    client = make_supabase_client()
+    store = SupabaseStore(client=client)
+
+    result = store.replace_top_scorers(
+        league_id=100,
+        rows=[
+            {
+                "api_player_id": 1, "player_name": "Player One", "team_name": "Team A",
+                "nationality": "Testland", "goals": 10, "assists": 3, "penalties": 1, "rank": 1,
+            },
+            {
+                "api_player_id": 2, "player_name": "Player Two", "team_name": "Team B",
+                "nationality": None, "goals": 8, "assists": None, "penalties": None, "rank": 2,
+            },
+        ],
+    )
+
+    assert result == {"upserted": 2, "pruned": 0}
+    stored = client.tables["top_scorers"]
+    assert len(stored) == 2
+    assert {r["api_player_id"] for r in stored} == {1, 2}
+    assert all(r["league_id"] == 100 for r in stored)
+
+
+def test_replace_top_scorers_is_a_no_op_for_an_empty_rows_list(make_supabase_client):
+    client = make_supabase_client(
+        top_scorers=[{"league_id": 100, "api_player_id": 1, "rank": 1}]
+    )
+    store = SupabaseStore(client=client)
+
+    result = store.replace_top_scorers(league_id=100, rows=[])
+
+    assert result == {"upserted": 0, "pruned": 0}
+    assert client.tables["top_scorers"] == [{"league_id": 100, "api_player_id": 1, "rank": 1}]
+
+
+def test_replace_top_scorers_prunes_players_who_fell_out_of_the_top_n(make_supabase_client):
+    client = make_supabase_client(
+        top_scorers=[
+            {
+                "league_id": 100, "api_player_id": 1, "player_name": "Stays",
+                "team_name": "A", "goals": 10, "rank": 1,
+            },
+            {
+                "league_id": 100, "api_player_id": 2, "player_name": "Falls Out",
+                "team_name": "B", "goals": 5, "rank": 2,
+            },
+            {  # a different league's board -- must survive untouched
+                "league_id": 200, "api_player_id": 1, "player_name": "Other League",
+                "team_name": "C", "goals": 99, "rank": 1,
+            },
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    result = store.replace_top_scorers(
+        league_id=100,
+        rows=[
+            {
+                "api_player_id": 1, "player_name": "Stays", "team_name": "A",
+                "nationality": None, "goals": 12, "assists": None, "penalties": None, "rank": 1,
+            },
+        ],
+    )
+
+    assert result == {"upserted": 1, "pruned": 1}
+    remaining_100 = [r for r in client.tables["top_scorers"] if r["league_id"] == 100]
+    assert len(remaining_100) == 1
+    assert remaining_100[0]["api_player_id"] == 1
+    assert remaining_100[0]["goals"] == 12  # updated in place, not re-inserted
+    remaining_200 = [r for r in client.tables["top_scorers"] if r["league_id"] == 200]
+    assert len(remaining_200) == 1  # a different league's board, untouched
+
+
+def test_replace_top_scorers_never_writes_photo_or_logo_fields(make_supabase_client):
+    client = make_supabase_client()
+    store = SupabaseStore(client=client)
+
+    store.replace_top_scorers(
+        league_id=100,
+        rows=[
+            {
+                "api_player_id": 1, "player_name": "Player One", "team_name": "Team A",
+                "nationality": "Testland", "goals": 10, "assists": 3, "penalties": 1, "rank": 1,
+            },
+        ],
+    )
+
+    row = client.tables["top_scorers"][0]
+    assert "photo" not in row
+    assert "logo" not in row
+
+
+def test_top_scorers_for_league_returns_rows_ordered_by_rank(make_supabase_client):
+    client = make_supabase_client(
+        top_scorers=[
+            {"league_id": 100, "api_player_id": 2, "player_name": "Second", "rank": 2},
+            {"league_id": 100, "api_player_id": 1, "player_name": "First", "rank": 1},
+            {"league_id": 200, "api_player_id": 9, "player_name": "Other League", "rank": 1},
+        ]
+    )
+    store = SupabaseStore(client=client)
+
+    rows = store.top_scorers_for_league(100)
+
+    assert [r["player_name"] for r in rows] == ["First", "Second"]
+
+
 def test_record_job_run_captures_failure_shape(make_supabase_client):
     client = make_supabase_client()
     store = SupabaseStore(client=client)

@@ -126,6 +126,14 @@ def test_get_fixtures_first_page_omits_the_page_param():
     assert session.calls[1]["params"] == {"league": 1, "season": 2026, "page": 2}
 
 
+def test_get_topscorers_passes_league_and_season_params():
+    session = FakeSession([FakeResponse(200, {"response": [], "errors": []})])
+    client = _client(session)
+    client.get_topscorers(1, 2026)
+    assert session.calls[0]["params"] == {"league": 1, "season": 2026}
+    assert session.calls[0]["url"].endswith("/players/topscorers")
+
+
 def test_extra_headers_are_merged():
     # The RapidAPI host header (config.API_FOOTBALL_EXTRA_HEADERS) is merged on
     # top of the auth header — the documented one-line distribution switch.
