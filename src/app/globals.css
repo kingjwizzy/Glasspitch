@@ -216,15 +216,15 @@ body {
     animation-delay: 210ms;
   }
 
-  /* Scroll-driven section reveals, JS-free: compositor-driven where
-     animation-timeline is supported; Safari and other unsupporting browsers
-     simply render content instantly (the correct fallback — no
-     IntersectionObserver, zero client JS). */
-  @supports (animation-timeline: view()) {
-    .reveal {
-      animation: rise-in linear both;
-      animation-timeline: view();
-      animation-range: entry 0% cover 30%;
-    }
-  }
+  /* Scroll-driven section reveals: REMOVED (2026-07-03, live P1). The
+     view()-timeline + `both`-fill combination left every below-fold section
+     pinned at the keyframe's opacity:0 start state whenever the timeline
+     failed to progress — verified live on glasspitch.com (5 of 7 homepage
+     sections invisible after scrolling, and invisible to tall-viewport
+     renderers like Googlebot). Content visibility must never depend on an
+     animation timeline firing; sections now render instantly (the fallback
+     the original design already deemed correct for Safari). The `.reveal`
+     class is intentionally left inert in the markup so a future, provably
+     safe entrance effect can rebind to it. Hero `.rise-in` (time-based,
+     always completes) is unaffected. */
 }
