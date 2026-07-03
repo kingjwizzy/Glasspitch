@@ -139,8 +139,15 @@ class ApiFootballClient:
             raise ApiFootballError(f"API-Football returned errors for {path}: {errors}")
 
     # --- typed endpoint helpers ---
-    def get_fixtures(self, league: int, season: int) -> dict[str, Any]:
-        return self.get("/fixtures", {"league": league, "season": season})
+    def get_fixtures(self, league: int, season: int, *, page: int = 1) -> dict[str, Any]:
+        """GET /fixtures for one league/season/page.
+
+        API-Football pages large responses (``payload['paging']``); callers
+        must loop while ``paging.current < paging.total``, incrementing
+        ``page`` (jobs/fetch_fixtures.py). Each page is a separate request and
+        counts against the per-run budget like any other call.
+        """
+        return self.get("/fixtures", {"league": league, "season": season, "page": page})
 
     def get_predictions(self, fixture: int) -> dict[str, Any]:
         return self.get("/predictions", {"fixture": fixture})

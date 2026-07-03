@@ -19,6 +19,12 @@ Do not let the build drift from their invariants; no skill may override them.
 the website only ever reads from Supabase.** No third-party API call is ever
 triggered by a visitor. The two layers meet *only* at the Postgres database.
 
+*v2 amendment (2026-07-03):* the sole sanctioned exception is the **Stripe webhook
+route handler** — server-only, signature-verified, idempotent via `stripe_events` —
+which writes **billing/account tables only** (`profiles`, `subscriptions`,
+`stripe_events`). Football-data tables remain writable by the jobs alone
+(enforced by table grants, not convention).
+
 ```
 API-Football ──▶ Python jobs ──▶ Supabase (write) ──▶ Next.js (read) ──▶ visitor
 ```
@@ -126,8 +132,13 @@ across runs. The website never calls the API.
   / gamble responsibly" disclaimer is in the base layout and on every page. **No** team
   crests, player photos, badges, or official tournament marks — **plain-text team
   names only**. No odds comparison, no affiliate / "bet now" links. (§13)
-- **Monetisation is built ready but off** (`tier` field, reserved ad slots) — don't
-  switch it on. No user accounts / personal data in v1. (§3, §4)
+- **Monetisation (v2, 2026-07-03): premium is ON** — Stripe, **test mode** until
+  restricted-business vetting + legal sign-off clear, then live keys. The **full
+  scored ledger and every prediction stay free forever**; premium gates only depth
+  content (insights/xG, ledger CSV/filters) held in subscriber-RLS tables.
+  `predictions.tier` is *not* the gating mechanism. Accounts exist via Supabase
+  Auth with minimal personal data; ICO registration before public sign-up
+  promotion. **Ads stay off.** (§4, §13)
 
 ## Skill routing
 

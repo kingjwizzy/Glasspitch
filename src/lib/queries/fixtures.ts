@@ -10,9 +10,11 @@ import 'server-only';
 // is logged but NEVER shown. Voided predictions (unlocked_void) are excluded for
 // integrity (§10).
 
+import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
 import { favoured } from '@/lib/format';
-import { DISPLAY_SOURCE, one } from './shared';
+import { DISPLAY_SOURCE, one, paginate } from './shared';
 
 /** One fixture row as presented on team / league pages. */
 export interface FixtureRowView {
@@ -53,12 +55,15 @@ export interface FixtureRowView {
 // fixtures has TWO FKs into teams, so the embeds MUST be disambiguated by
 // constraint name or PostgREST errors. predictions is embedded un-filtered (a
 // fixture has at most two rows: api-football + elo-v1) and the displayed one is
-// picked in JS — avoids the embedded-filter / inner-join footguns (§9).
+// picked in JS — avoids the embedded-filter / inner-join footguns (§9). `!inner`
+// on the league embed (rather than the default to-one left join) is required so
+// callers can `.gte('league.season', MIN_SEASON)` to actually EXCLUDE rows
+// instead of merely nulling the embed (§5 season guard).
 export const FIXTURE_ROW_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
-  league:leagues!fixtures_league_id_fkey(name, slug),
+  league:leagues!fixtures_league_id_fkey!inner(name, slug, season),
   predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals,
     status, source, locked_at, result, brier_score)
 `;
@@ -73,6 +78,7 @@ interface RawTeam {
 interface RawLeague {
   name: string;
   slug: string;
+  season: number;
 }
 interface RawRowPrediction {
   prob_home: number;
@@ -242,4 +248,62 @@ export function buildScoredRecord(rows: FixtureRowView[]): ScoredRecord | null {
     scoredRows.length;
 
   return { scored: scoredRows.length, hits, meanBrier };
+}
+
+/** One fixture as presented in the sitemap. */
+export interface SitemapFixture {
+  id: number;
+  kickoffUtc: string;
+  status: FixtureStatus;
+  /** Last DB write to the fixture row — a good `lastModified` proxy once it's
+   *  finished; the kickoff time itself is more meaningful beforehand. */
+  updatedAt: string;
+}
+
+/**
+ * Every fixture id (+ kickoff/status/updatedAt), for the sitemap's per-match
+ * URLs — ARCHITECTURE.md §11 calls per-match pages "the growth engine", so they
+ * must be discoverable from the sitemap, not only via internal links. Bounded
+ * and paginated (§8): PostgREST silently caps an unbounded select at the
+ * project's Max Rows setting (default 1000), which a season of club football
+ * would exceed. Season-guarded (§5) so pre-live-season dev-seed fixtures are
+ * never submitted to search engines. Read-only, like every web read (§5
+ * golden rule); degrades to [] on any error so a transient DB blip yields a
+ * smaller sitemap rather than a failed build (a sitemap is best-effort, not a
+ * page).
+ */
+export async function getSitemapFixtures(): Promise<SitemapFixture[]> {
+  try {
+    const sb = getSupabaseClient();
+    const rows = await paginate<{
+      id: number;
+      kickoff_utc: string;
+      status: string;
+      updated_at: string;
+    }>(async (from, to) => {
+      const { data, error } = await sb
+        .from('fixtures')
+        .select(
+          'id, kickoff_utc, status, updated_at, league:leagues!fixtures_league_id_fkey!inner(season)',
+        )
+        .gte('league.season', MIN_SEASON)
+        .order('kickoff_utc', { ascending: false })
+        .range(from, to);
+      if (error) return null;
+      return data as unknown as Array<{
+        id: number;
+        kickoff_utc: string;
+        status: string;
+        updated_at: string;
+      }>;
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      kickoffUtc: r.kickoff_utc,
+      status: r.status as FixtureStatus,
+      updatedAt: r.updated_at,
+    }));
+  } catch {
+    return [];
+  }
 }

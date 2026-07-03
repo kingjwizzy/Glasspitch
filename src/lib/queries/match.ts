@@ -13,8 +13,9 @@ import { cache } from 'react';
 // fall back to empty without ever blocking the page (§5 failure handling).
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import type { FixtureStatus, MatchResult, PredictionStatus } from '@/lib/types';
-import { DISPLAY_SOURCE, one, withTimeout } from './shared';
+import { DISPLAY_SOURCE, one, previewAllowed, withTimeout } from './shared';
 import { previewMatchData } from './match.preview';
 
 /** The third-party prediction as shown on the match page. */
@@ -25,6 +26,8 @@ export interface MatchPrediction {
   predicted_home_goals: number;
   predicted_away_goals: number;
   status: PredictionStatus;
+  /** When the third-party model's prediction was first published. */
+  published_at: string;
   /** = kickoff; the row is immutable once locked_at <= now() (§7). */
   locked_at: string;
   // Scoring fields — present once `status === 'scored'` (§10), else null.
@@ -33,6 +36,8 @@ export interface MatchPrediction {
   log_loss: number | null;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  /** When the scoring job wrote the result; null until `status === 'scored'`. */
+  scored_at: string | null;
 }
 
 /** One past result from a single team's perspective (for the form strip). */
@@ -51,6 +56,9 @@ export interface FormResult {
 export interface MatchData {
   id: number;
   league: string;
+  /** Competition slug, e.g. "world-cup" — lets the match page link the
+   *  competition name to its /league page (§11 internal-link equity). */
+  leagueSlug: string;
   kickoff_utc: string;
   status: FixtureStatus;
   home: string;
@@ -75,15 +83,20 @@ const FORM_LIMIT = 5;
 // fixtures has TWO FKs into teams, so the embeds MUST be disambiguated by
 // constraint name or PostgREST errors. Predictions are embedded un-filtered (a
 // fixture has at most two: api-football + elo-v1) and the displayed one is
-// picked in JS, which avoids the embedded-filter / inner-join footguns.
+// picked in JS, which avoids the embedded-filter / inner-join footguns. `!inner`
+// on the league embed (rather than the default to-one left join) is required so
+// `.gte('league.season', MIN_SEASON)` below actually EXCLUDES the row (treating
+// a pre-live-season fixture as "missing" — §5 season guard) instead of merely
+// nulling the embed.
 const MATCH_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
   home_team_id, away_team_id,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
-  league:leagues!fixtures_league_id_fkey(name),
+  league:leagues!fixtures_league_id_fkey!inner(name, slug, season),
   predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals,
-    status, source, locked_at, result, brier_score, log_loss, final_home_goals, final_away_goals)
+    status, source, published_at, locked_at, result, brier_score, log_loss,
+    final_home_goals, final_away_goals, scored_at)
 `;
 
 const FORM_SELECT = `
@@ -96,6 +109,11 @@ interface RawTeam {
   name: string;
   slug?: string;
 }
+interface RawMatchLeague {
+  name: string;
+  slug: string;
+  season: number;
+}
 interface RawPrediction {
   prob_home: number;
   prob_draw: number;
@@ -104,12 +122,14 @@ interface RawPrediction {
   predicted_away_goals: number;
   status: string;
   source: string;
+  published_at: string;
   locked_at: string;
   result: string | null;
   brier_score: number | null;
   log_loss: number | null;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  scored_at: string | null;
 }
 interface RawMatchFixture {
   id: number;
@@ -121,7 +141,7 @@ interface RawMatchFixture {
   away_team_id: number;
   home_team: RawTeam | RawTeam[] | null;
   away_team: RawTeam | RawTeam[] | null;
-  league: { name: string } | { name: string }[] | null;
+  league: RawMatchLeague | RawMatchLeague[] | null;
   predictions: RawPrediction[] | null;
 }
 interface RawFormFixture {
@@ -143,10 +163,13 @@ type FixtureLoad = RawMatchFixture | 'missing' | 'error';
 async function loadFixture(id: number): Promise<FixtureLoad> {
   try {
     const sb = getSupabaseClient();
+    // §5 season guard: a pre-live-season fixture (dev-seed data) is treated as
+    // "missing" — it must never render as a genuine match page.
     const { data, error } = await sb
       .from('fixtures')
       .select(MATCH_SELECT)
       .eq('id', id)
+      .gte('league.season', MIN_SEASON)
       .maybeSingle();
     if (error) return 'error';
     if (!data) return 'missing';
@@ -198,12 +221,14 @@ function mapPrediction(p: RawPrediction): MatchPrediction {
     predicted_home_goals: p.predicted_home_goals,
     predicted_away_goals: p.predicted_away_goals,
     status: p.status as PredictionStatus,
+    published_at: p.published_at,
     locked_at: p.locked_at,
     result: (p.result as MatchResult | null) ?? null,
     brier_score: p.brier_score,
     log_loss: p.log_loss,
     final_home_goals: p.final_home_goals,
     final_away_goals: p.final_away_goals,
+    scored_at: p.scored_at,
   };
 }
 
@@ -234,6 +259,7 @@ async function load(id: number): Promise<MatchData | null> {
   return {
     id: fixture.id,
     league: league?.name ?? '',
+    leagueSlug: league?.slug ?? '',
     kickoff_utc: fixture.kickoff_utc,
     status: fixture.status as FixtureStatus,
     home: home?.name ?? 'Home',
@@ -254,14 +280,20 @@ async function load(id: number): Promise<MatchData | null> {
  * `generateMetadata` and the page body share a single DB read per request.
  *
  * `PREVIEW_MATCH` is a server-only dev/preview escape hatch (NOT a NEXT_PUBLIC
- * var, never set in production): it returns representative in-memory fixtures so
- * every prediction state (published / locked / scored / voided / none) can be
- * rendered and screenshotted with no seeded database. It writes nothing.
+ * var, and requires the separate `ALLOW_PREVIEW=1` flag — see
+ * `previewAllowed()` — so it can never activate on a real deploy): it returns
+ * representative in-memory fixtures so every prediction state (published /
+ * locked / scored / voided / none) can be rendered and screenshotted with no
+ * seeded database. It writes nothing.
+ *
+ * `id` is validated by the caller (`parseId` in the page, bounded to a safe
+ * integer) before this runs; a non-integer or out-of-range id degrades to a
+ * genuine 404 here rather than an invalid DB filter.
  */
 export const getMatchData = cache(
   async (id: number): Promise<MatchData | null> => {
     if (!Number.isInteger(id) || id <= 0) return null;
-    if (process.env.PREVIEW_MATCH) return previewMatchData(id);
+    if (previewAllowed() && process.env.PREVIEW_MATCH) return previewMatchData(id);
     return load(id);
   },
 );

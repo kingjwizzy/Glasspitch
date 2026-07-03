@@ -1,5 +1,6 @@
 import ProbabilityBar from '@/components/ProbabilityBar';
 import LockStatusLine from '@/components/LockStatusLine';
+import AuditLine from '@/components/match/AuditLine';
 import { LockOpenIcon } from '@/components/icons';
 import { scoreLine } from '@/lib/format';
 import { THIRD_PARTY_LABEL } from '@/lib/constants';
@@ -75,6 +76,7 @@ export default function PredictionPanel({
       />
 
       <LockStatusLine status={prediction.status} className="mt-4" />
+      <AuditLine prediction={prediction} />
 
       <p className="mt-3 border-t border-line pt-3 text-xs text-fg-dim">
         {THIRD_PARTY_LABEL}

@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     description: HOME_DESCRIPTION,
     url: '/',
   },
-  twitter: { card: 'summary', title: HOME_TITLE, description: HOME_DESCRIPTION },
+  twitter: { card: 'summary_large_image', title: HOME_TITLE, description: HOME_DESCRIPTION },
 };
 
 // ISR: the page re-renders at most every 10 minutes — matchday-fresh without any

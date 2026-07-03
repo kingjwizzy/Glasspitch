@@ -3,12 +3,17 @@
 // The secret key bypasses Row Level Security and can write (ARCHITECTURE.md
 // §7). It must NEVER reach the browser bundle (§12): the secret key is a
 // secret. In this product the Python jobs are the canonical writers; this
-// client exists only for any server-side maintenance the web layer may need.
+// client is reserved for a future sanctioned server-side writer (e.g. the W2
+// Stripe webhook route) — see CLAUDE.md's roster note that widening the "jobs
+// are the only DB writers" invariant needs an explicit ARCHITECTURE.md
+// amendment before anything actually writes through it.
 //
-// The runtime guard below throws immediately if this module is ever imported
-// into client code, satisfying the §7/§12 requirement that the secret key
-// never ship to the client.
+// `import 'server-only'` makes an accidental client-component import a BUILD
+// error rather than only a runtime throw in the visitor's browser (the
+// `typeof window` guard below is belt-and-braces on top of it, since it also
+// catches a bare dynamic `require`/`import()` that bundling might not).
 
+import 'server-only';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
 

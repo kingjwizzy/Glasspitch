@@ -31,6 +31,21 @@ function TeamName({
   );
 }
 
+// The competition name links to its league page (mirrors TeamName above) —
+// internal-link equity for /league pages, which otherwise are reachable only
+// from team-page headers and the sitemap (§11). Falls back to plain text when
+// a slug is missing.
+function CompetitionName({ name, slug }: { name: string; slug: string }) {
+  if (!slug) return <p className="truncate text-xs text-fg-dim">{name}</p>;
+  return (
+    <p className="truncate text-xs">
+      <Link href={`/league/${slug}`} className="text-fg-dim transition-colors hover:text-fg">
+        {name}
+      </Link>
+    </p>
+  );
+}
+
 function StatusPill({ status }: { status: FixtureStatus }) {
   if (status === 'live') return <LivePill />;
   const label =
@@ -48,6 +63,7 @@ function StatusPill({ status }: { status: FixtureStatus }) {
 
 export interface MatchHeaderProps {
   league: string;
+  leagueSlug: string;
   home: string;
   away: string;
   homeSlug: string;
@@ -60,6 +76,7 @@ export interface MatchHeaderProps {
 
 export default function MatchHeader({
   league,
+  leagueSlug,
   home,
   away,
   homeSlug,
@@ -77,11 +94,7 @@ export default function MatchHeader({
   return (
     <header className="rounded-2xl border border-line bg-surface p-5">
       <div className="flex items-center justify-between gap-3">
-        {league ? (
-          <p className="truncate text-xs text-fg-dim">{league}</p>
-        ) : (
-          <span />
-        )}
+        {league ? <CompetitionName name={league} slug={leagueSlug} /> : <span />}
         <StatusPill status={status} />
       </div>
 

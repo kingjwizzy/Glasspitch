@@ -84,7 +84,19 @@ export const RESULT_LABEL: Record<MatchResult, string> = {
   away: 'Away win',
 };
 
-/** Name the picked outcome by team, or "the draw" — for "we backed …" copy. */
+/**
+ * Shared label for every "our call" surface (RecentCalls, ScoredResult,
+ * FixtureRow, LedgerTable) — always followed by the outcome name and the
+ * probability in parentheses, e.g. "Our call: Brazil (54%)". A single shared
+ * constant so the wording can never drift back into betting vernacular
+ * ("backed"/"backing" reads as bet-slip language, which contradicts the
+ * "analysis, not betting advice" framing — ARCHITECTURE.md §9/§13).
+ */
+export const OUR_CALL_LABEL = 'Our call:';
+
+/** Name the picked outcome by team, or "the draw" — used in the "Our call: …"
+ *  copy (see `OUR_CALL_LABEL`) shared by RecentCalls/ScoredResult/FixtureRow/
+ *  LedgerTable. */
 export function outcomeName(key: MatchResult, home: string, away: string): string {
   if (key === 'home') return home;
   if (key === 'away') return away;

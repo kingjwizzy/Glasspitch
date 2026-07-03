@@ -33,11 +33,23 @@ export default defineConfig({
     timeout: 120_000,
     // Locally, reuse a server already on :3000; in CI always start fresh.
     reuseExistingServer: !process.env.CI,
-    // Render the home page with representative preview data (server-only flag,
-    // writes nothing — see src/lib/queries/homepage.preview.ts) so the e2e
-    // a11y/landmark specs exercise the populated hero + ProbabilityBars, not
-    // only the empty state. Merged over process.env (CI provides the dummy
-    // NEXT_PUBLIC_* there; locally `next` reads them from .env.local).
-    env: { PREVIEW_HOMEPAGE: '1' },
+    // Render every DB-backed route with representative preview data (server-only
+    // hatches, write NOTHING — see src/lib/queries/*.preview.ts) so the e2e
+    // a11y/landmark specs exercise populated content — the hero + ProbabilityBars,
+    // a scored/locked/voided match, a team, a league, and the ledger's calibration
+    // table + scored rows — not only empty states. ALLOW_PREVIEW=1 is the second,
+    // explicit flag every PREVIEW_* hatch requires together (src/lib/queries/shared.ts
+    // previewAllowed()) — a single stray PREVIEW_* var alone does nothing, which is
+    // exactly why it must be set here for any of them to fire in this production
+    // build. Merged over process.env (CI provides the dummy NEXT_PUBLIC_* there;
+    // locally `next` reads them from .env.local).
+    env: {
+      ALLOW_PREVIEW: '1',
+      PREVIEW_HOMEPAGE: '1',
+      PREVIEW_LEDGER: '1',
+      PREVIEW_MATCH: '1',
+      PREVIEW_TEAM: '1',
+      PREVIEW_LEAGUE: '1',
+    },
   },
 });

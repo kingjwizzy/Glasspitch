@@ -100,6 +100,22 @@ def test_non_200_non_transient_raises():
         client.get("/x")
 
 
+def test_get_fixtures_passes_the_page_param():
+    # jobs/fetch_fixtures.py loops pages via get_fixtures(..., page=N) -- the
+    # real client must forward it as a query param, not just accept the kwarg.
+    session = FakeSession([FakeResponse(200, {"response": [], "errors": []})])
+    client = _client(session)
+    client.get_fixtures(1, 2026, page=3)
+    assert session.calls[0]["params"] == {"league": 1, "season": 2026, "page": 3}
+
+
+def test_get_fixtures_defaults_to_page_one():
+    session = FakeSession([FakeResponse(200, {"response": [], "errors": []})])
+    client = _client(session)
+    client.get_fixtures(1, 2026)
+    assert session.calls[0]["params"] == {"league": 1, "season": 2026, "page": 1}
+
+
 def test_extra_headers_are_merged():
     # The RapidAPI host header (config.API_FOOTBALL_EXTRA_HEADERS) is merged on
     # top of the auth header — the documented one-line distribution switch.

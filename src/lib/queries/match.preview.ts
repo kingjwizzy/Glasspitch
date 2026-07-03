@@ -47,6 +47,22 @@ interface Spec {
   awayForm: FormResult[];
 }
 
+/** Illustrative "published two days before kickoff" timestamp for the preview
+ *  audit line (real predictions are published well before kickoff). */
+function publishedAtFor(kickoffIso: string): string {
+  const d = new Date(kickoffIso);
+  d.setUTCDate(d.getUTCDate() - 2);
+  return d.toISOString();
+}
+
+/** Illustrative "scored ~2 hours after kickoff" timestamp for the preview
+ *  audit line (real scoring happens shortly after full-time). */
+function scoredAtFor(kickoffIso: string): string {
+  const d = new Date(kickoffIso);
+  d.setUTCHours(d.getUTCHours() + 2);
+  return d.toISOString();
+}
+
 function build(s: Spec): MatchData {
   const final = s.final ?? null;
   const prediction: MatchPrediction | null =
@@ -59,16 +75,19 @@ function build(s: Spec): MatchData {
           predicted_home_goals: s.predicted[0],
           predicted_away_goals: s.predicted[1],
           status: s.predStatus,
+          published_at: publishedAtFor(s.kickoff),
           locked_at: s.kickoff,
           result: s.result ?? null,
           brier_score: s.brier ?? null,
           log_loss: s.logLoss ?? null,
           final_home_goals: final ? final[0] : null,
           final_away_goals: final ? final[1] : null,
+          scored_at: s.predStatus === 'scored' ? scoredAtFor(s.kickoff) : null,
         };
   return {
     id: s.id,
     league: 'FIFA World Cup',
+    leagueSlug: 'world-cup',
     kickoff_utc: s.kickoff,
     status: s.status,
     home: s.home,

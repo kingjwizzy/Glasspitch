@@ -2,7 +2,8 @@
 
 import pytest
 
-from jobs import elo
+from jobs import config, elo, util
+from jobs.apiclient import ApiFootballError, RequestBudgetExceeded
 from jobs.fetch_predictions import (
     normalise_probabilities,
     parse_api_prediction,
@@ -139,6 +140,214 @@ def test_run_elo_uses_replayed_ratings(make_store, make_api, make_fixture):
     counts = run(dry_run=False, store=store, api=api)
 
     assert counts["elo_inserted"] == 1  # no crash despite the null-goal fixture
+    elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
+    default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
+    assert elo_row["prob_home"] > default_home
+
+
+# --- kickoff window (v2 hardening: config.PREDICTION_FETCH_WINDOW_HOURS) ------
+# FakeStore.upcoming_fixtures_within uses a fixed reference "now" (6h before
+# make_fixture's default kickoff) unless a test overrides it -- see conftest.py.
+
+
+def test_run_only_fetches_fixtures_within_the_kickoff_window(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    in_window = make_fixture(
+        id=300, api_fixture_id=9001, kickoff_utc="2026-06-11T18:00:00+00:00"  # +6h from "now"
+    )
+    far_future = make_fixture(
+        id=301, api_fixture_id=9002, kickoff_utc="2026-07-01T18:00:00+00:00"  # ~20 days out
+    )
+    store = make_store(upcoming=[in_window, far_future])
+    api = make_api(predictions={9001: predictions_payload, 9002: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["upcoming"] == 1  # only the in-window fixture is considered at all
+    assert api.prediction_calls == [9001]
+
+
+def test_run_respects_a_custom_window_from_config(
+    make_store, make_api, make_fixture, predictions_payload, monkeypatch
+):
+    # Same far-future fixture as above, but widening the window comfortably
+    # past it must bring it back into scope -- proves the bound really is
+    # config.PREDICTION_FETCH_WINDOW_HOURS, not a hardcoded constant.
+    monkeypatch.setattr(config, "PREDICTION_FETCH_WINDOW_HOURS", 24 * 30)
+    fixture = make_fixture(id=301, api_fixture_id=9002, kickoff_utc="2026-07-01T18:00:00+00:00")
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9002: predictions_payload})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["upcoming"] == 1
+    assert api.prediction_calls == [9002]
+
+
+# --- per-fixture error isolation + graceful budget stop (v2 hardening) --------
+
+
+def test_run_isolates_one_fixtures_api_error_from_the_rest(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    f1 = make_fixture(id=300, api_fixture_id=9001)
+    f2 = make_fixture(id=301, api_fixture_id=9002)
+    store = make_store(upcoming=[f1, f2])
+    api = make_api(
+        predictions={9001: ApiFootballError("upstream 500"), 9002: predictions_payload}
+    )
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["api_failed"] == 1
+    assert counts["api_inserted"] == 1  # fixture 2 still processed
+    assert counts["elo_inserted"] == 2  # the Elo pass is unaffected by pass-1 errors
+
+
+def test_run_stops_api_pass_gracefully_on_budget_exhaustion_but_elo_still_runs(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    f1 = make_fixture(id=300, api_fixture_id=9001)
+    f2 = make_fixture(id=301, api_fixture_id=9002)
+    store = make_store(upcoming=[f1, f2])
+    api = make_api(
+        predictions={9001: RequestBudgetExceeded("budget gone"), 9002: predictions_payload}
+    )
+
+    counts = run(dry_run=False, store=store, api=api)  # must not raise
+
+    assert counts["budget_exhausted"] is True
+    assert counts["api_inserted"] == 0  # stopped before ever reaching fixture 2
+    assert api.prediction_calls == [9001]  # fixture 2's /predictions never called
+    assert counts["elo_inserted"] == 2  # Elo pass still runs for BOTH fixtures
+
+
+# --- published_at stamped fresh per insert, not frozen at run start -----------
+
+
+def test_published_at_is_stamped_fresh_per_insert_not_frozen_at_run_start(
+    make_store, make_api, make_fixture, predictions_payload, monkeypatch
+):
+    f1 = make_fixture(id=300, api_fixture_id=9001)
+    f2 = make_fixture(id=301, api_fixture_id=9002)
+    store = make_store(upcoming=[f1, f2])
+    api = make_api(predictions={9001: predictions_payload, 9002: predictions_payload})
+
+    # Four inserts happen (api x2, elo x2); each must ask the clock separately
+    # -- feed a fresh, distinct value per call so a frozen-at-start bug (one
+    # shared timestamp for every row) would be caught.
+    ticks = iter(
+        [
+            "2026-06-11T12:00:00+00:00",
+            "2026-06-11T12:00:05+00:00",
+            "2026-06-11T12:00:10+00:00",
+            "2026-06-11T12:00:15+00:00",
+        ]
+    )
+    monkeypatch.setattr(util, "now_utc", lambda: util.parse_iso(next(ticks)))
+
+    run(dry_run=False, store=store, api=api)  # deliberately no `now=` kwarg
+
+    published_ats = [p["published_at"] for p in store.inserted_predictions]
+    assert len(published_ats) == 4
+    assert len(set(published_ats)) == 4  # every insert got its own fresh stamp
+
+
+def test_now_kwarg_freezes_the_clock_for_deterministic_tests(
+    make_store, make_api, make_fixture, predictions_payload
+):
+    # The inverse of the above: when `now` IS injected (as every other test in
+    # this file relies on), every stamp is that SAME fixed value.
+    fixture = make_fixture(id=300, api_fixture_id=9001)
+    store = make_store(upcoming=[fixture])
+    api = make_api(predictions={9001: predictions_payload})
+    fixed_now = util.parse_iso("2026-06-11T12:00:00+00:00")
+
+    run(dry_run=False, store=store, api=api, now=fixed_now)
+
+    published_ats = {p["published_at"] for p in store.inserted_predictions}
+    assert published_ats == {fixed_now.isoformat()}
+
+
+# --- Elo replay scoped to the tracked league(s) + season (v2 hardening) -------
+# _derived_ratings calls store.finished_fixtures_for_replay(api_league_ids=...,
+# season=...) instead of the old unscoped finished_fixtures_ordered(), so a
+# dev back-test season (or an unrelated league) can never leak into the
+# replayed ratings pool. FakeStore's wildcard convention (see conftest.py)
+# means a fixture only needs "season"/"api_league_id" set when a test wants to
+# assert exclusion -- so this test sets them explicitly on the excluded fixture.
+
+
+def test_elo_replay_excludes_fixtures_outside_the_tracked_season(
+    make_store, make_api, make_fixture, monkeypatch
+):
+    monkeypatch.setattr(config, "SEASON", 2026)
+    monkeypatch.setattr(config, "TRACKED_LEAGUE_IDS", [1])
+
+    upcoming = make_fixture(id=300, api_fixture_id=9001, home_team_id=200, away_team_id=201)
+    # A big win for team 200 -- but tagged as a DIFFERENT (dev back-test) season,
+    # so it must NOT be replayed into the live 2026 ratings pool.
+    other_season_result = make_fixture(
+        id=290, status="finished", home_team_id=200, away_team_id=201,
+        final_home_goals=5, final_away_goals=0, kickoff_utc="2022-06-09T18:00:00+00:00",
+        season=2022, api_league_id=1,
+    )
+    store = make_store(upcoming=[upcoming], finished=[other_season_result])
+    api = make_api(predictions={9001: {"response": []}})  # isolate the Elo path
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["elo_inserted"] == 1
+    elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
+    default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
+    # If the other season's 5-0 result HAD leaked in, team 200's rating (and
+    # thus its home win probability) would be well above the cold-start
+    # default; excluded, it stays exactly at default.
+    assert elo_row["prob_home"] == pytest.approx(default_home)
+
+
+def test_elo_replay_excludes_fixtures_from_untracked_leagues(
+    make_store, make_api, make_fixture, monkeypatch
+):
+    monkeypatch.setattr(config, "SEASON", 2026)
+    monkeypatch.setattr(config, "TRACKED_LEAGUE_IDS", [1])
+
+    upcoming = make_fixture(id=300, api_fixture_id=9001, home_team_id=200, away_team_id=201)
+    other_league_result = make_fixture(
+        id=290, status="finished", home_team_id=200, away_team_id=201,
+        final_home_goals=5, final_away_goals=0, kickoff_utc="2026-06-09T18:00:00+00:00",
+        season=2026, api_league_id=999,  # NOT in TRACKED_LEAGUE_IDS
+    )
+    store = make_store(upcoming=[upcoming], finished=[other_league_result])
+    api = make_api(predictions={9001: {"response": []}})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["elo_inserted"] == 1
+    elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
+    default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
+    assert elo_row["prob_home"] == pytest.approx(default_home)
+
+
+def test_elo_replay_includes_fixtures_inside_the_tracked_season_and_league(
+    make_store, make_api, make_fixture, monkeypatch
+):
+    monkeypatch.setattr(config, "SEASON", 2026)
+    monkeypatch.setattr(config, "TRACKED_LEAGUE_IDS", [1])
+
+    upcoming = make_fixture(id=300, api_fixture_id=9001, home_team_id=200, away_team_id=201)
+    tracked_result = make_fixture(
+        id=290, status="finished", home_team_id=200, away_team_id=201,
+        final_home_goals=5, final_away_goals=0, kickoff_utc="2026-06-09T18:00:00+00:00",
+        season=2026, api_league_id=1,
+    )
+    store = make_store(upcoming=[upcoming], finished=[tracked_result])
+    api = make_api(predictions={9001: {"response": []}})
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["elo_inserted"] == 1
     elo_row = next(p for p in store.inserted_predictions if p["source"] == "inhouse-elo")
     default_home = elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)["home"]
     assert elo_row["prob_home"] > default_home

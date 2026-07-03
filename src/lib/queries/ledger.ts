@@ -15,9 +15,10 @@ import 'server-only';
 // not recompute them; it only means them and buckets the probabilities.
 
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { MIN_SEASON } from '@/lib/constants';
 import type { MatchResult } from '@/lib/types';
 import { predictedPick } from '@/lib/format';
-import { DISPLAY_SOURCE, one, withTimeout } from './shared';
+import { DISPLAY_SOURCE, one, previewAllowed, withTimeoutOrThrow } from './shared';
 import { previewLedgerRows } from './ledger.preview';
 
 export { DISPLAY_SOURCE };
@@ -110,6 +111,7 @@ interface RawTeam {
 }
 interface RawLeague {
   name: string;
+  season: number;
 }
 interface RawLedgerFixture {
   id: number;
@@ -135,17 +137,21 @@ interface RawLedgerRow {
 
 // fixtures has TWO FKs into teams, so the embeds MUST be disambiguated by
 // constraint name or PostgREST errors (same pattern as homepage.ts / match.ts).
+// `!inner` on fixture AND league (rather than the default to-one left join) is
+// required so `.gte('fixture.league.season', MIN_SEASON)` below actually
+// EXCLUDES rows instead of merely nulling the embed (§5 season guard — defence
+// in depth against pre-live-season dev-seed data ever rendering as the record).
 const SCORED_SELECT = `
   id, prob_home, prob_draw, prob_away,
   predicted_home_goals, predicted_away_goals,
   final_home_goals, final_away_goals,
   result, brier_score, log_loss,
-  fixture:fixtures!predictions_fixture_id_fkey(
+  fixture:fixtures!predictions_fixture_id_fkey!inner(
     id,
     kickoff_utc,
     home_team:teams!fixtures_home_team_id_fkey(name),
     away_team:teams!fixtures_away_team_id_fkey(name),
-    league:leagues!fixtures_league_id_fkey(name)
+    league:leagues!fixtures_league_id_fkey!inner(name, season)
   )
 `;
 
@@ -270,12 +276,14 @@ function assemble(rows: LedgerRowView[]): LedgerData {
 async function load(): Promise<LedgerData> {
   const sb = getSupabaseClient();
 
-  // The all-time scored record. Hard-filtered to the displayed third-party model
-  // and scored status (so elo-v1 and unlocked_void can never surface), ordered
-  // newest-first, and bounded: the mean, the count and the row list all come from
-  // the SAME set (an unbounded select is silently row-capped by PostgREST, which
-  // would diverge the mean from the count it claims). The limit is far above WC
-  // scale; a SQL aggregate RPC is the scale path once the ledger outgrows it.
+  // The all-time scored record. Hard-filtered to the displayed third-party model,
+  // scored status (so elo-v1 and unlocked_void can never surface) AND the live
+  // season floor (so pre-cutover dev-seed data can never render as the record —
+  // §5 season guard), ordered newest-first, and bounded: the mean, the count and
+  // the row list all come from the SAME set (an unbounded select is silently
+  // row-capped by PostgREST, which would diverge the mean from the count it
+  // claims). The limit is far above WC scale; a SQL aggregate RPC is the scale
+  // path once the ledger outgrows it.
   //
   // Both per-row scores AND the result are required non-null, so every displayed
   // figure — mean Brier, mean log loss, the hit/miss split and the 3-per-match
@@ -291,31 +299,45 @@ async function load(): Promise<LedgerData> {
     .not('brier_score', 'is', null)
     .not('log_loss', 'is', null)
     .not('result', 'is', null)
+    .gte('fixture.league.season', MIN_SEASON)
     .order('scored_at', { ascending: false })
     .limit(5000);
 
+  // supabase-js RESOLVES errors rather than throwing them — an unchecked
+  // `res.error` is the primary failure route (a bad query, an expired key, RLS
+  // misconfiguration, a network blip all land here, not in a catch block).
+  // Throwing lets a failed ISR background revalidation keep serving the last
+  // good cached page and retry next revalidation, instead of silently
+  // replacing the trust engine with a false "no scored predictions yet" — the
+  // one state this page must never show unless it is genuinely true.
+  if (res.error) {
+    throw new Error(`ledger read failed: ${res.error.message}`);
+  }
+
   const rows = ((res.data as RawLedgerRow[] | null) ?? []).map(mapRow);
-  return assemble(rows);
+  return assemble(rows); // genuinely zero rows → EMPTY-shaped summary, honestly
 }
 
 /**
  * The single read the ledger page makes. Server-only.
  *
  * `PREVIEW_LEDGER` is a dev/preview escape hatch (NOT a NEXT_PUBLIC var, so it is
- * server-only, never reaches the client bundle, and is never set in production):
- * `'empty'` renders the honest no-record state and `'1'` or `'default'` render
- * illustrative in-memory rows, so the page can be built and screenshotted with no
- * seeded database. It writes NOTHING — the empty state is a READ-TIME toggle only,
- * never produced by deleting, voiding or writing to the DB.
+ * server-only, never reaches the client bundle, and requires the separate
+ * `ALLOW_PREVIEW=1` flag — see `previewAllowed()` — so it can never activate on a
+ * real deploy): `'empty'` renders the honest no-record state and `'1'` or
+ * `'default'` render illustrative in-memory rows, so the page can be built and
+ * screenshotted with no seeded database. It writes NOTHING — the empty state is a
+ * READ-TIME toggle only, never produced by deleting, voiding or writing to the DB.
+ *
+ * A genuine DB failure THROWS (see `load()`) rather than being swallowed to
+ * EMPTY — the caller (the page, ISR) is responsible for that behaviour.
  */
 export async function getLedgerData(): Promise<LedgerData> {
-  const preview = process.env.PREVIEW_LEDGER;
-  if (preview === 'empty') return EMPTY;
-  if (preview === '1' || preview === 'default') return assemble(previewLedgerRows());
-
-  try {
-    return await withTimeout(load(), 6000, EMPTY);
-  } catch {
-    return EMPTY;
+  if (previewAllowed()) {
+    const preview = process.env.PREVIEW_LEDGER;
+    if (preview === 'empty') return EMPTY;
+    if (preview === '1' || preview === 'default') return assemble(previewLedgerRows());
   }
+
+  return withTimeoutOrThrow(load(), 6000);
 }

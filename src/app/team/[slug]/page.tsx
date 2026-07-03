@@ -8,6 +8,7 @@ import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import { getTeamData, getAllTeamSlugs } from '@/lib/queries/team';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL } from '@/lib/constants';
+import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so the
 // page stays fresh without per-visitor DB work. Reads come only from Supabase —
@@ -62,7 +63,7 @@ export async function generateMetadata({
       description,
       url: `/team/${data.slug}`,
     },
-    twitter: { card: 'summary', title, description },
+    twitter: { card: 'summary_large_image', title, description },
   };
 }
 
@@ -78,16 +79,6 @@ function teamJsonLd(name: string, slug: string) {
   };
 }
 
-/** Serialise JSON-LD for safe embedding in a <script> tag: escape the
- *  characters that could otherwise break out of the element (defence in depth —
- *  team names come from the jobs feed, never a visitor). */
-function jsonLdScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/&/g, '\\u0026')
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e');
-}
-
 export default async function TeamPage({ params }: TeamPageProps) {
   const { slug } = await params;
   const data = await getTeamData(slug);
@@ -95,11 +86,20 @@ export default async function TeamPage({ params }: TeamPageProps) {
 
   const { name, league, leagueSlug, upcoming, recent, form, record } = data;
 
+  const breadcrumb = breadcrumbJsonLd([
+    ...(league && leagueSlug ? [{ name: league, url: `/league/${leagueSlug}` }] : []),
+    { name, url: `/team/${data.slug}` },
+  ]);
+
   return (
     <article className="space-y-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: jsonLdScript(teamJsonLd(name, data.slug)) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(breadcrumb) }}
       />
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}

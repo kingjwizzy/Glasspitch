@@ -1,14 +1,17 @@
 """Daily job: one third-party prediction per fixture + logged Elo (ARCHITECTURE.md §8.2, §9).
 
-For each upcoming fixture WITHOUT an api-football prediction, GET
+For each fixture WITHIN THE KICKOFF WINDOW (config.PREDICTION_FETCH_WINDOW_HOURS
+-- default 72h) that doesn't already have an api-football prediction: GET
 /predictions?fixture={id} EXACTLY ONCE (the rate-limit rule, §8), parse the
 home/draw/away percentages, normalise them to sum to exactly 1.0, derive a
 predicted scoreline, and insert a published prediction (locked_at = kickoff).
 Alongside it, compute and insert the in-house Elo prediction (logged-only, §9).
 
-Empty/missing third-party predictions are handled gracefully (skip + log, never
-crash). The Elo cold-starts from a default rating and its team ratings are
-derived by replaying finished fixtures (no separate ratings table — §9).
+Runs in two decoupled passes: the third-party fetch loop is isolated per
+fixture (one bad fixture logs + continues; RequestBudgetExceeded ends that
+pass early and gracefully, never crashing the run) and the Elo pass runs for
+every fixture in the window regardless of how the first pass went, since it
+makes no API call and doesn't depend on the request budget.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from jobs import config, elo, util
-from jobs.apiclient import ApiFootballClient
+from jobs.apiclient import ApiFootballClient, ApiFootballError, RequestBudgetExceeded
 from jobs.cli import main
 from jobs.db import SupabaseStore
 
@@ -122,8 +125,13 @@ def build_prediction_row(
 
 
 def _derived_ratings(store: SupabaseStore) -> dict:
-    """Current Elo ratings, derived by replaying finished fixtures (§9)."""
-    finished = store.finished_fixtures_ordered()
+    """Current Elo ratings, derived by replaying finished fixtures (§9),
+    scoped to the tracked league(s) + season (config.py) so results from other
+    seasons/competitions never leak into the replayed ratings pool.
+    """
+    finished = store.finished_fixtures_for_replay(
+        api_league_ids=config.TRACKED_LEAGUE_IDS, season=config.SEASON,
+    )
     results = [
         (f["home_team_id"], f["away_team_id"], f["final_home_goals"], f["final_away_goals"])
         for f in finished
@@ -141,12 +149,17 @@ def run(
 ) -> dict:
     api = api if api is not None else ApiFootballClient()
     store = store if store is not None else SupabaseStore()
-    now_iso = (now or util.now_utc()).isoformat()
 
-    upcoming = store.upcoming_fixtures()
+    def _stamp() -> str:
+        # Computed fresh per insert (not once at run start): a slow run
+        # (retries, many fixtures) must not stamp published_at with a
+        # run-start time that predates kickoff by more than reality -- see
+        # v2 hardening notes. When ``now`` is injected (tests), it stays fixed.
+        return (now or util.now_utc()).isoformat()
+
+    upcoming = store.upcoming_fixtures_within(config.PREDICTION_FETCH_WINDOW_HOURS)
     have_api = store.existing_prediction_fixture_ids(config.THIRD_PARTY_SOURCE)
     have_elo = store.existing_prediction_fixture_ids(config.ELO_SOURCE)
-    ratings = _derived_ratings(store)
 
     counts = {
         "upcoming": len(upcoming),
@@ -154,74 +167,102 @@ def run(
         "api_inserted": 0,
         "api_empty": 0,
         "api_skipped_existing": 0,
+        "api_failed": 0,
+        "budget_exhausted": False,
         "elo_inserted": 0,
         "elo_skipped_existing": 0,
     }
 
+    # --- Pass 1: third-party (API-Football) prediction, fetched ONCE per
+    # fixture, isolated per fixture so one bad fixture can't abort the run.
     for fixture in upcoming:
         fixture_id = fixture["id"]
-        kickoff_utc = fixture["kickoff_utc"]
-
-        # --- third-party (API-Football) prediction: fetch ONCE per fixture ---
         if fixture_id in have_api:
             counts["api_skipped_existing"] += 1
-        else:
-            payload = api.get_predictions(fixture["api_fixture_id"])
-            counts["api_fetched"] += 1
-            parsed = parse_api_prediction(payload)
-            if parsed is None:
-                counts["api_empty"] += 1
-                log.info(
-                    "No third-party prediction for fixture %s (api_id=%s); "
-                    "skipping (may retry next run).",
-                    fixture_id, fixture["api_fixture_id"],
-                )
-            else:
-                row = build_prediction_row(
-                    fixture_id=fixture_id,
-                    source=config.THIRD_PARTY_SOURCE,
-                    model_version=config.THIRD_PARTY_MODEL_VERSION,
-                    probabilities=(parsed.prob_home, parsed.prob_draw, parsed.prob_away),
-                    scoreline=parsed.scoreline,
-                    kickoff_utc=kickoff_utc,
-                    now_iso=now_iso,
-                )
-                if dry_run:
-                    log.info(
-                        "[dry-run] would insert api-football prediction for fixture "
-                        "%s: H/D/A=%.3f/%.3f/%.3f score=%s advice=%r",
-                        fixture_id, parsed.prob_home, parsed.prob_draw, parsed.prob_away,
-                        parsed.scoreline, parsed.advice,
-                    )
-                elif store.insert_prediction(row) is not None:
-                    counts["api_inserted"] += 1
+            continue
 
-        # --- in-house Elo prediction (logged-only — §9) ---
+        try:
+            payload = api.get_predictions(fixture["api_fixture_id"])
+        except RequestBudgetExceeded as exc:
+            # Subclasses ApiFootballError (jobs/apiclient.py) -- must be caught
+            # FIRST and handled as "stop fetching, budget is gone", not as
+            # "this one fixture failed".
+            counts["budget_exhausted"] = True
+            log.warning(
+                "fetch_predictions: request budget exhausted (%s); ending the "
+                "API-Football pass early (the Elo pass below still runs).", exc,
+            )
+            break
+        except ApiFootballError as exc:
+            counts["api_failed"] += 1
+            log.error(
+                "fetch_predictions: fixture %s (api_id=%s) failed (%s); "
+                "continuing with remaining fixtures.",
+                fixture_id, fixture["api_fixture_id"], exc,
+            )
+            continue
+
+        counts["api_fetched"] += 1
+        parsed = parse_api_prediction(payload)
+        if parsed is None:
+            counts["api_empty"] += 1
+            log.info(
+                "No third-party prediction for fixture %s (api_id=%s); "
+                "skipping (may retry next run).",
+                fixture_id, fixture["api_fixture_id"],
+            )
+            continue
+
+        row = build_prediction_row(
+            fixture_id=fixture_id,
+            source=config.THIRD_PARTY_SOURCE,
+            model_version=config.THIRD_PARTY_MODEL_VERSION,
+            probabilities=(parsed.prob_home, parsed.prob_draw, parsed.prob_away),
+            scoreline=parsed.scoreline,
+            kickoff_utc=fixture["kickoff_utc"],
+            now_iso=_stamp(),
+        )
+        if dry_run:
+            log.info(
+                "[dry-run] would insert api-football prediction for fixture "
+                "%s: H/D/A=%.3f/%.3f/%.3f score=%s advice=%r",
+                fixture_id, parsed.prob_home, parsed.prob_draw, parsed.prob_away,
+                parsed.scoreline, parsed.advice,
+            )
+        elif store.insert_prediction(row) is not None:
+            counts["api_inserted"] += 1
+
+    # --- Pass 2: in-house Elo (logged-only — §9). Runs for every fixture in the
+    # window regardless of pass 1's outcome: no API call, no budget dependency.
+    ratings = _derived_ratings(store)
+    for fixture in upcoming:
+        fixture_id = fixture["id"]
         if fixture_id in have_elo:
             counts["elo_skipped_existing"] += 1
-        else:
-            home_rating = ratings.get(fixture["home_team_id"], elo.DEFAULT_RATING)
-            away_rating = ratings.get(fixture["away_team_id"], elo.DEFAULT_RATING)
-            probs = elo.match_probabilities(home_rating, away_rating)
-            normalised = normalise_probabilities(probs["home"], probs["draw"], probs["away"])
-            row = build_prediction_row(
-                fixture_id=fixture_id,
-                source=config.ELO_SOURCE,
-                model_version=config.ELO_MODEL_VERSION,
-                probabilities=normalised,
-                scoreline=elo.predicted_scoreline(home_rating, away_rating),
-                kickoff_utc=kickoff_utc,
-                now_iso=now_iso,
+            continue
+
+        home_rating = ratings.get(fixture["home_team_id"], elo.DEFAULT_RATING)
+        away_rating = ratings.get(fixture["away_team_id"], elo.DEFAULT_RATING)
+        probs = elo.match_probabilities(home_rating, away_rating)
+        normalised = normalise_probabilities(probs["home"], probs["draw"], probs["away"])
+        row = build_prediction_row(
+            fixture_id=fixture_id,
+            source=config.ELO_SOURCE,
+            model_version=config.ELO_MODEL_VERSION,
+            probabilities=normalised,
+            scoreline=elo.predicted_scoreline(home_rating, away_rating),
+            kickoff_utc=fixture["kickoff_utc"],
+            now_iso=_stamp(),
+        )
+        if dry_run:
+            log.info(
+                "[dry-run] would insert elo-v1 prediction for fixture %s: "
+                "H/D/A=%.3f/%.3f/%.3f score=%s (ratings %.0f/%.0f)",
+                fixture_id, *normalised, row["predicted_home_goals"],
+                home_rating, away_rating,
             )
-            if dry_run:
-                log.info(
-                    "[dry-run] would insert elo-v1 prediction for fixture %s: "
-                    "H/D/A=%.3f/%.3f/%.3f score=%s (ratings %.0f/%.0f)",
-                    fixture_id, *normalised, row["predicted_home_goals"],
-                    home_rating, away_rating,
-                )
-            elif store.insert_prediction(row) is not None:
-                counts["elo_inserted"] += 1
+        elif store.insert_prediction(row) is not None:
+            counts["elo_inserted"] += 1
 
     # Surface true network usage (includes retries) so an operator can see how
     # much of the request budget a run — including a --dry-run — consumed (§8).

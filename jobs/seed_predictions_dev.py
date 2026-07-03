@@ -74,7 +74,14 @@ def run(
     api = api if api is not None else ApiFootballClient()
     store = store if store is not None else SupabaseStore()
 
-    finished = store.finished_fixtures_ordered()
+    # Season-scoped (not the old unscoped finished_fixtures_ordered): the
+    # config-identity interlock above only checks WHICH season is configured,
+    # not which rows get touched, so the read itself must be physically
+    # confined to config.SEASON. Otherwise, once the DB holds both disposable
+    # dev rows and the live season side by side, a dev-configured run could
+    # still fabricate predictions onto the live season's finished fixtures
+    # (docs/STATUS.md "close before the live cutover").
+    finished = store.finished_fixtures_for_season(config.SEASON)
     have_api = store.existing_prediction_fixture_ids(config.THIRD_PARTY_SOURCE)
     have_elo = store.existing_prediction_fixture_ids(config.ELO_SOURCE)
     ratings = _derived_ratings(store)

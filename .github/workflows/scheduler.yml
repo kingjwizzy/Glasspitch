@@ -10,27 +10,51 @@ name: Jobs scheduler
 #                                   that detects full-time so results can score
 #                                   (§8 lists both roles; one job, one endpoint).
 #   fetch_predictions  daily      — one third-party prediction PER FIXTURE, EVER
-#                                   (never re-fetched), plus the logged Elo (§9).
+#                                   (never re-fetched, and only within a kickoff
+#                                   window — jobs/config.py
+#                                   PREDICTION_FETCH_WINDOW_HOURS), plus the
+#                                   logged Elo (§9).
 #   lock_predictions   every 10m  — at kickoff: published -> locked; late ones ->
 #                                   unlocked_void. The ledger's integrity backbone
 #                                   (§10). DB-only — makes NO football-API call.
-#   score_results      every 20m  — finished fixtures: copy score, set result,
-#                                   compute Brier + log loss, mark scored (§10).
-#                                   DB-only — makes NO football-API call. End-to-end
-#                                   scoring latency is bounded by fetch_fixtures'
-#                                   poll: a finished match is scored within ~6h+20m.
+#   score_results      every 20m  — locked+finished predictions: copy score, set
+#                                   result, compute Brier + log loss, mark scored
+#                                   (§10). DB-only — makes NO football-API call.
+#                                   End-to-end scoring latency is bounded by
+#                                   fetch_fixtures' poll: a finished match is
+#                                   scored within ~6h+20m.
+#   keepalive          monthly    — pushes a heartbeat commit so the REPO never
+#                                   goes 60 days without activity, which is what
+#                                   triggers GitHub's automatic disabling of
+#                                   scheduled workflows (see the keepalive job
+#                                   below for the full rationale).
 #
-# Daily API budget (free tier = 100 req/day; §8):
-#   fetch_fixtures    4 runs x 1 league x 1 request          =  4 req/day
-#   fetch_predictions 1 run, once-per-NEW-fixture (<=64 ever) = ~0-64 req/day,
-#                     and 64 only on the one-time backfill day; ~0-16 steady
+# Daily API budget (free tier = 100 req/day; §8). Updated for the live 2026
+# config (FIFA World Cup 2026 = 104 fixtures total, not the older 64-match
+# figure this comment used to cite — see docs/STATUS.md for the correction):
+#   fetch_fixtures    4 runs/day x 1 tracked league. Each run pages through
+#                     however many pages API-Football returns (jobs/fetch_
+#                     fixtures.py) -- at 104 fixtures that's one page in
+#                     practice, so ~4 req/day; even a few pages stays well
+#                     under budget.
+#   fetch_predictions 1 run/day, one call per fixture kicking off within
+#                     PREDICTION_FETCH_WINDOW_HOURS (default 72h) that doesn't
+#                     have a prediction yet -- NEVER all 104 fixtures in one
+#                     run (unlike the old unbounded sweep). Worst case a
+#                     handful of requests/day at this competition's scale.
 #   lock_predictions  144 runs x 0 requests                  =  0 req/day
 #   score_results      72 runs x 0 requests                  =  0 req/day
-#   Worst realistic day (initial backfill) ~ 68 req; steady state ~ 4-20 req.
-#   Comfortably under 100; the per-run MAX_REQUESTS_PER_RUN guard caps any one run.
+#   keepalive           ~1 run/month x 0 requests            =  0 req/day
+#   Worst realistic day comfortably under 20 req; the per-run
+#   MAX_REQUESTS_PER_RUN guard caps any one run regardless.
 #
 # All writes are idempotent (upserts keyed on api_* ids; predictions fetched
 # once), so every job is safe to re-run and safe to overlap-skip (§5, §8).
+#
+# Failure alerting: every football-API/DB job below has an `if: failure()` step
+# that opens (or comments on, if already open) a tracking GitHub issue via `gh`
+# — a silently dead pipeline is otherwise invisible (empty-state web fallbacks
+# would just look like "no upcoming matches" to a visitor).
 
 on:
   # Manual trigger is ALWAYS enabled — run any single job (or all) from the
@@ -47,6 +71,7 @@ on:
           - fetch_predictions
           - lock_predictions
           - score_results
+          - keepalive
       dry_run:
         description: 'Dry run — no DB writes. NOTE: fetch_* still call the football API (counts against the 100/day budget).'
         type: boolean
@@ -54,7 +79,7 @@ on:
 
   # ───────────────────────────────────────────────────────────────────────────
   # UNCOMMENT AT GO-LIVE — turns on the automatic cron schedule.
-  # Until the five lines below (`schedule:` + its four `- cron:` entries) are
+  # Until the six lines below (`schedule:` + its five `- cron:` entries) are
   # uncommented, NOTHING fires automatically: the workflow is manual-only via the
   # "Run workflow" button above. Each cron string is unique and maps to exactly
   # one job through that job's `if:` guard (github.event.schedule == '<cron>').
@@ -64,9 +89,12 @@ on:
   #   - cron: '15 6 * * *'     # fetch_predictions  — daily 06:15 UTC
   #   - cron: '*/10 * * * *'   # lock_predictions   — every 10 min
   #   - cron: '*/20 * * * *'   # score_results      — every 20 min
+  #   - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
 
 # Least privilege: the jobs only read the checked-out repo and talk to Supabase /
-# the football API over the network. They never write back to the repo.
+# the football API over the network. They never write back to the repo (the
+# `keepalive` job below is the one deliberate exception, and grants itself
+# `contents: write` at the job level for exactly that).
 permissions:
   contents: read
 
@@ -85,6 +113,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_fixtures')) ||
       github.event.schedule == '0 */6 * * *'
+    permissions:
+      contents: read
+      issues: write
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -95,12 +126,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: '.python-version'
           cache: pip
           cache-dependency-path: jobs/requirements.txt
       - run: pip install -r jobs/requirements.txt
       - name: Run fetch_fixtures
         run: python -m jobs.fetch_fixtures ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: fetch_fixtures
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
 
   # ---- daily: fetch one prediction per fixture (once, ever) -------------------
   fetch_predictions:
@@ -113,6 +162,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'fetch_predictions')) ||
       github.event.schedule == '15 6 * * *'
+    permissions:
+      contents: read
+      issues: write
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -121,12 +173,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: '.python-version'
           cache: pip
           cache-dependency-path: jobs/requirements.txt
       - run: pip install -r jobs/requirements.txt
       - name: Run fetch_predictions
         run: python -m jobs.fetch_predictions ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: fetch_predictions
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
 
   # ---- frequent: lock predictions at kickoff (DB-only, no API) ---------------
   lock_predictions:
@@ -139,6 +209,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'lock_predictions')) ||
       github.event.schedule == '*/10 * * * *'
+    permissions:
+      contents: read
+      issues: write
     # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -147,12 +220,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: '.python-version'
           cache: pip
           cache-dependency-path: jobs/requirements.txt
       - run: pip install -r jobs/requirements.txt
       - name: Run lock_predictions
         run: python -m jobs.lock_predictions ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: lock_predictions
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
 
   # ---- frequent around match end: score finished fixtures (DB-only, no API) --
   score_results:
@@ -165,6 +256,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'score_results')) ||
       github.event.schedule == '*/20 * * * *'
+    permissions:
+      contents: read
+      issues: write
     # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -173,9 +267,65 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: '.python-version'
           cache: pip
           cache-dependency-path: jobs/requirements.txt
       - run: pip install -r jobs/requirements.txt
       - name: Run score_results
         run: python -m jobs.score_results ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: score_results
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- monthly: keepalive (prevents the 60-day scheduled-workflow auto-disable) --
+  # GitHub automatically disables a repo's SCHEDULED workflows after 60 days
+  # with no repository activity (pushes/PRs) — not something an `if: failure()`
+  # step or a healthy job run can fix, since none of that counts as "activity"
+  # in GitHub's sense. This job pushes a trivial heartbeat-file commit once a
+  # month (`[skip ci]` so it doesn't itself retrigger ci.yml), which resets that
+  # clock for every scheduled workflow in the repo — including this one and the
+  # four pipeline jobs above. Cheap insurance against a live site going quiet
+  # for two months and its scheduler silently switching itself off.
+  keepalive:
+    name: keepalive (60-day scheduled-workflow inactivity guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Deliberately NOT included in job == 'all' -- picking "all" to smoke-test
+    # the pipeline manually shouldn't have the side effect of pushing a repo
+    # commit. Trigger it explicitly (job == 'keepalive') or via its own cron.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'keepalive') ||
+      github.event.schedule == '0 5 1 * *'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push a heartbeat commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p .github/heartbeat
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/heartbeat/last-keepalive.txt
+          git add .github/heartbeat/last-keepalive.txt
+          if git diff --cached --quiet; then
+            echo "No change (already ran this month) — nothing to commit."
+          else
+            git commit -m "chore(scheduler): keepalive heartbeat [skip ci]"
+            git push
+          fi

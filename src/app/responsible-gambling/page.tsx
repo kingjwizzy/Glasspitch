@@ -18,53 +18,84 @@ export const metadata: Metadata = {
     description: RG_DESCRIPTION,
     url: '/responsible-gambling',
   },
-  twitter: { card: 'summary', title: RG_TITLE, description: RG_DESCRIPTION },
+  twitter: { card: 'summary_large_image', title: RG_TITLE, description: RG_DESCRIPTION },
 };
+
+const SUPPORT_LINKS = [
+  {
+    name: 'National Gambling Helpline',
+    href: 'tel:08088020133',
+    display: '0808 8020 133',
+    description:
+      'Free, confidential support and information, 24 hours a day, every day — run by GamCare.',
+  },
+  {
+    name: 'GamCare',
+    href: 'https://www.gamcare.org.uk',
+    display: 'gamcare.org.uk',
+    description:
+      'Information, advice and support for anyone affected by gambling harm, including free tools and treatment.',
+  },
+  {
+    name: 'GAMSTOP',
+    href: 'https://www.gamstop.co.uk',
+    display: 'gamstop.co.uk',
+    description: 'Free self-exclusion from all UK-licensed online gambling sites and apps.',
+  },
+  {
+    name: 'GambleAware',
+    href: 'https://www.gambleaware.org',
+    display: 'gambleaware.org',
+    description: 'Independent charity funding research, education and treatment for gambling harm.',
+  },
+] as const;
 
 export default function ResponsibleGamblingPage() {
   return (
     <article className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">Responsible gambling</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
+        Responsible gambling
+      </h1>
 
-      <p className="text-black/70 dark:text-white/70">
-        <strong>{RESPONSIBLE_GAMBLING}</strong> Glass Pitch publishes football
-        analysis and probabilities for context and entertainment. Nothing here is
-        betting advice, a tip we guarantee, or an inducement to gamble.
-        Probabilities describe uncertainty; they do not predict the future.
+      <p className="text-fg-dim">
+        <strong className="text-fg">{RESPONSIBLE_GAMBLING}</strong> Glass Pitch
+        publishes football analysis and probabilities for context and
+        entertainment. Nothing here is betting advice, a tip we guarantee, or an
+        inducement to gamble. Probabilities describe uncertainty; they do not
+        predict the future.
       </p>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">If you need support</h2>
-        {/* TODO [VERIFY YOURSELF — ARCHITECTURE.md §9, §16]: confirm the CURRENT
-            official UK responsible-gambling resources at build time before
-            launch. The support landscape is changing under the new statutory
-            levy, so these names/links must be re-verified rather than assumed.
-            Candidates to confirm and link:
-              - National Gambling Helpline (operated by GamCare) — phone + chat
-              - GamCare — gamcare.org.uk
-              - GAMSTOP — gamstop.co.uk (free self-exclusion, UK-licensed sites)
-              - GambleAware / BeGambleAware — begambleaware.org
-            Replace this block with verified, linked resources before going live. */}
-        <ul className="list-disc space-y-1 pl-5 text-black/70 dark:text-white/70">
-          <li>
-            National Gambling Helpline (GamCare) — details to be confirmed at
-            launch.
-          </li>
-          <li>
-            GAMSTOP — free self-exclusion from UK-licensed gambling sites — to be
-            confirmed.
-          </li>
-          <li>GambleAware — information and support — to be confirmed.</li>
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          If you need support
+        </h2>
+        <ul className="space-y-3">
+          {SUPPORT_LINKS.map((link) => (
+            <li
+              key={link.name}
+              className="rounded-xl border border-line bg-surface p-4"
+            >
+              <a
+                href={link.href}
+                target={link.href.startsWith('http') ? '_blank' : undefined}
+                rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
+                className="inline-flex min-h-11 items-center text-sm font-medium text-green transition-colors hover:text-green-bright"
+              >
+                {link.name} — {link.display}
+              </a>
+              <p className="mt-1 text-xs leading-relaxed text-fg-dim">
+                {link.description}
+              </p>
+            </li>
+          ))}
         </ul>
-        <p className="text-xs text-black/60 dark:text-white/60">
-          Links are intentionally left to be verified against current official
-          guidance before launch.
-        </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Staying in control</h2>
-        <ul className="list-disc space-y-1 pl-5 text-black/70 dark:text-white/70">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Staying in control
+        </h2>
+        <ul className="list-disc space-y-1 pl-5 text-fg-dim">
           <li>
             Treat any betting as paid entertainment, never as a way to make or
             recover money.

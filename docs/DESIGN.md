@@ -22,7 +22,7 @@ Dark-first (sports/data products live in dark mode; it suits evening matchday us
 - `--bg` `#0E1311` — page; deep floodlit-pitch charcoal (green-tinted, not black)
 - `--surface` `#161D1A` — raised cards (the "glass" layer)
 - `--surface-2` `#1E2723` — higher elevation / hover
-- `--border` `rgba(255,255,255,0.08)` — hairline dividers
+- `--line` `rgba(255,255,255,0.08)` — hairline dividers (named `--line` in the implementation)
 - `--text` `#EAF0EC` — primary
 - `--text-dim` `#9DA8A2` — secondary
 - `--text-faint` `#6B746F` — hints / labels
@@ -89,6 +89,8 @@ Stickiness here comes from substance, not tricks. The strongest, on-brand loops:
 - **Beat the model** (the big one) — a free, virtual-points prediction game: predict outcomes, earn points, climb a leaderboard, and track your *own* record against the model's. Non-gambling (no money, no prizes — keeps you the right side of ARCHITECTURE.md §13), genuinely sticky, and perfectly on-brand: everyone keeps an honest record, not just us. (v2 — reserve for it now.)
 - **Shareable result cards** — "I beat the model this week."
 - **Speed** — a fast, installable (PWA-lite) site is itself retention.
+
+**Paywall & upgrade CTAs (v2, 2026-07-03):** the upgrade surface obeys the responsible-design rule absolutely. State plainly what premium contains, the price, and that **the ledger and all predictions stay free**; never imply paying improves the predictions. No urgency, no countdowns, no guilt copy ("only serious fans…"), no interstitials or overlays blocking free content, no more than one quiet upgrade affordance per page. Cancelling must be as easy as subscribing (Stripe Customer Portal, linked plainly).
 
 **Responsible-design rule (non-negotiable):** this is a gambling-*adjacent* product, so engagement must never tip into manipulation — no fake urgency, no dark patterns, no variable-reward dopamine traps, no notification spam, nothing engineered to be compulsive. That's an ethical line (some of the audience are vulnerable to gambling harm) *and* a strategic one (a brand whose entire pitch is honesty cannot use sleazy retention mechanics, and manipulative engagement around gambling draws regulatory and ad-platform fire). Sticky through usefulness and trust — full stop.
 

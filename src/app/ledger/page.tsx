@@ -30,7 +30,7 @@ export const metadata: Metadata = {
     description: LEDGER_DESCRIPTION,
     url: '/ledger',
   },
-  twitter: { card: 'summary', title: LEDGER_TITLE, description: LEDGER_DESCRIPTION },
+  twitter: { card: 'summary_large_image', title: LEDGER_TITLE, description: LEDGER_DESCRIPTION },
 };
 
 function fmt(value: number | null): string {

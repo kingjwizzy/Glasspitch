@@ -77,3 +77,23 @@ THIRD_PARTY_MODEL_VERSION = "api-football-v1"
 THIRD_PARTY_SOURCE = "api-football"
 ELO_MODEL_VERSION = "elo-v1"
 ELO_SOURCE = "inhouse-elo"
+
+# --- Scale / robustness knobs (v2 hardening) ----------------------------------
+# fetch_predictions only fetches a third-party prediction for fixtures kicking
+# off within this window. Without a bound, a full club season ingested by
+# fetch_fixtures (hundreds of scheduled fixtures) would attempt one /predictions
+# call per fixture on the very next run, blowing the request budget and storing
+# months-stale predictions long before they're useful. Env-overridable for
+# tuning/tests.
+PREDICTION_FETCH_WINDOW_HOURS: float = float(
+    os.environ.get("PREDICTION_FETCH_WINDOW_HOURS") or "72"
+)
+
+# A fixture that stays 'postponed' this long past its original kickoff, with no
+# reschedule, is treated as definitively not-played: any published/locked
+# predictions for it are closed out (status='void_cancelled') rather than left
+# in permanent limbo (jobs/fetch_fixtures.py). Cancelled/abandoned fixtures
+# (API status CANC/ABD) are closed out immediately regardless of this horizon.
+POSTPONED_VOID_HORIZON_DAYS: int = int(
+    os.environ.get("POSTPONED_VOID_HORIZON_DAYS") or "45"
+)

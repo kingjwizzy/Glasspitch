@@ -10,6 +10,7 @@ import LedgerCallout from '@/components/match/LedgerCallout';
 import { getMatchData, type MatchData } from '@/lib/queries/match';
 import { formatDateShort, templateRead } from '@/lib/format';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
+import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so a match
 // stays fresh around kickoff without any per-visitor work, and NEVER calls the
@@ -34,8 +35,16 @@ export function generateStaticParams() {
 }
 
 function parseId(raw: string): number {
-  // Bare integer ids only (the route is /match/[id]); anything else → 404.
-  return /^\d+$/.test(raw) ? Number(raw) : NaN;
+  // Bare integer ids only (the route is /match/[id]), bounded to a sane digit
+  // length. Without the length cap, a huge digit string still matches
+  // `Number.isInteger` (JS floats represent large whole numbers exactly enough
+  // to pass that check) but overflows Postgres bigint / loses precision,
+  // surfacing as a thrown DB error (match.ts throws on transient failures so
+  // ISR retries) — a 500 for a URL that should just 404. 15 digits is well
+  // under Number.MAX_SAFE_INTEGER (16 digits) and Postgres bigint's range.
+  if (!/^\d{1,15}$/.test(raw)) return NaN;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : NaN;
 }
 
 export async function generateMetadata({
@@ -78,7 +87,7 @@ export async function generateMetadata({
       description,
       url: `/match/${data.id}`,
     },
-    twitter: { card: 'summary', title, description },
+    twitter: { card: 'summary_large_image', title, description },
   };
 }
 
@@ -101,16 +110,6 @@ function eventJsonLd(data: MatchData) {
     json.eventStatus = 'https://schema.org/EventPostponed';
   }
   return json;
-}
-
-/** Serialise JSON-LD for safe embedding in a <script> tag: escape the
- *  characters that could otherwise break out of the element (defence in depth —
- *  team/competition names come from the jobs feed, never a visitor). */
-function jsonLdScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/&/g, '\\u0026')
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e');
 }
 
 export default async function MatchPage({ params }: MatchPageProps) {
@@ -139,6 +138,13 @@ export default async function MatchPage({ params }: MatchPageProps) {
 
   const hasForm = data.homeForm.length > 0 || data.awayForm.length > 0;
 
+  const breadcrumb = breadcrumbJsonLd([
+    ...(data.league && data.leagueSlug
+      ? [{ name: data.league, url: `/league/${data.leagueSlug}` }]
+      : []),
+    { name: `${data.home} v ${data.away}`, url: `/match/${data.id}` },
+  ]);
+
   return (
     <article className="space-y-8">
       <script
@@ -147,9 +153,14 @@ export default async function MatchPage({ params }: MatchPageProps) {
         // surface rich while the page stays zero-client-JS (DESIGN.md §8).
         dangerouslySetInnerHTML={{ __html: jsonLdScript(eventJsonLd(data)) }}
       />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(breadcrumb) }}
+      />
 
       <MatchHeader
         league={data.league}
+        leagueSlug={data.leagueSlug}
         home={data.home}
         away={data.away}
         homeSlug={data.homeSlug}

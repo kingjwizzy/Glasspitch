@@ -1,5 +1,9 @@
 """Tests for fetch_fixtures: status mapping, parsing, idempotent upserts, dry-run."""
 
+from datetime import timedelta
+
+from jobs import config, util
+from jobs.apiclient import ApiFootballError, RequestBudgetExceeded
 from jobs.fetch_fixtures import map_fixture_status, parse_fixture, run
 
 
@@ -80,3 +84,141 @@ def test_parse_fixture_finished_falls_back_to_goals_with_lowercase_status():
 def test_status_mapping_is_case_insensitive():
     assert map_fixture_status("ns") == "scheduled"
     assert map_fixture_status("ft") == "finished"
+
+
+# --- pagination (v2 hardening: fetch_fixtures loops through every /fixtures page) --
+
+
+def _fixture_item(api_fixture_id, home_id, home_name, away_id, away_name, *, date):
+    return {
+        "fixture": {"id": api_fixture_id, "date": date, "status": {"short": "NS"}},
+        "league": {"id": 1, "name": "World Cup", "country": "World", "season": 2026},
+        "teams": {
+            "home": {"id": home_id, "name": home_name},
+            "away": {"id": away_id, "name": away_name},
+        },
+        "goals": {"home": None, "away": None},
+        "score": {"fulltime": {"home": None, "away": None}},
+    }
+
+
+def test_run_paginates_across_multiple_fixture_pages(store, make_api):
+    page1 = {
+        "response": [_fixture_item(9001, 1, "Brazil", 2, "Argentina", date="2026-06-11T16:00:00+00:00")],
+        "paging": {"current": 1, "total": 2},
+    }
+    page2 = {
+        "response": [_fixture_item(9002, 3, "France", 4, "Germany", date="2026-06-12T16:00:00+00:00")],
+        "paging": {"current": 2, "total": 2},
+    }
+    api = make_api(fixtures_pages=[page1, page2])
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["fixtures_seen"] == 2
+    assert counts["fixtures_upserted"] == 2
+    assert len(store.upserted_fixtures) == 2
+    assert api.request_count == 2  # one request per page
+    assert api.fixture_calls == [(1, config.SEASON, 1), (1, config.SEASON, 2)]
+
+
+def test_run_single_page_response_makes_exactly_one_request(store, make_api, fixtures_payload):
+    # fixtures_payload carries no "paging" key at all -- the loop must treat
+    # that as "one page total" and not attempt a second request.
+    api = make_api(fixtures=fixtures_payload)
+    run(dry_run=False, store=store, api=api)
+    assert api.request_count == 1
+
+
+# --- per-league error isolation + graceful budget stop (v2 hardening) ---------
+
+
+def test_run_continues_to_next_league_after_one_leagues_api_error(store, make_api, monkeypatch):
+    monkeypatch.setattr(config, "TRACKED_LEAGUE_IDS", [1, 2])
+    league2_payload = {
+        "response": [_fixture_item(9101, 11, "Spain", 12, "Italy", date="2026-06-13T16:00:00+00:00")],
+    }
+    api = make_api(
+        fixtures_by_league={
+            1: ApiFootballError("upstream 500"),
+            2: league2_payload,
+        }
+    )
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["leagues_failed"] == 1
+    # League 1 contributed nothing; league 2's fixture was still written.
+    assert counts["fixtures_upserted"] == 1
+    assert len(store.upserted_fixtures) == 1
+
+
+def test_run_stops_gracefully_on_budget_exhaustion_without_crashing(store, make_api, monkeypatch):
+    monkeypatch.setattr(config, "TRACKED_LEAGUE_IDS", [1, 2])
+    league2_payload = {
+        "response": [_fixture_item(9102, 21, "Spain", 22, "Italy", date="2026-06-13T16:00:00+00:00")],
+    }
+    api = make_api(
+        fixtures_by_league={
+            1: RequestBudgetExceeded("budget gone"),
+            2: league2_payload,
+        }
+    )
+
+    counts = run(dry_run=False, store=store, api=api)  # must not raise
+
+    assert counts["leagues_failed"] == 1
+    # Budget exhaustion ends the WHOLE run (break, not continue) -- league 2
+    # must never even be attempted.
+    assert store.upserted_fixtures == []
+    assert all(call[0] != 2 for call in api.fixture_calls)
+
+
+# --- terminal-fixture closure (cancelled/abandoned -> void_cancelled) ---------
+
+
+def test_run_closes_out_predictions_for_a_cancelled_fixture(store, make_api, make_prediction):
+    item = {
+        "fixture": {"id": 9500, "date": "2026-06-11T16:00:00+00:00", "status": {"short": "CANC"}},
+        "league": {"id": 1, "name": "World Cup", "country": "World", "season": 2026},
+        "teams": {"home": {"id": 1, "name": "Brazil"}, "away": {"id": 2, "name": "Argentina"}},
+        "goals": {"home": None, "away": None},
+        "score": {"fulltime": {"home": None, "away": None}},
+    }
+    api = make_api(fixtures={"response": [item]})
+    # FakeStore.upsert_fixture deterministically assigns 900_000 + api_fixture_id.
+    fixture_id = 900_000 + 9500
+    store.predictions.append(
+        make_prediction(id="p1", fixture_id=fixture_id, status="locked")
+    )
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["predictions_closed_terminal"] == 1
+    assert store.predictions[0]["status"] == "void_cancelled"
+    assert store.closed_terminal == [fixture_id]
+
+
+def test_run_does_not_close_predictions_for_a_merely_postponed_fixture(
+    store, make_api, make_prediction
+):
+    # Plain PST (not CANC/ABD) within the horizon is NOT terminal yet -- it may
+    # still be rescheduled, so its predictions must be left alone. Kickoff is
+    # computed relative to real "now" (well under POSTPONED_VOID_HORIZON_DAYS)
+    # so this doesn't rot as the wall clock advances.
+    recent_kickoff = (util.now_utc() - timedelta(days=10)).isoformat()
+    item = {
+        "fixture": {"id": 9501, "date": recent_kickoff, "status": {"short": "PST"}},
+        "league": {"id": 1, "name": "World Cup", "country": "World", "season": 2026},
+        "teams": {"home": {"id": 1, "name": "Brazil"}, "away": {"id": 2, "name": "Argentina"}},
+        "goals": {"home": None, "away": None},
+        "score": {"fulltime": {"home": None, "away": None}},
+    }
+    api = make_api(fixtures={"response": [item]})
+    fixture_id = 900_000 + 9501
+    store.predictions.append(make_prediction(id="p1", fixture_id=fixture_id, status="locked"))
+
+    counts = run(dry_run=False, store=store, api=api)
+
+    assert counts["predictions_closed_terminal"] == 0
+    assert store.predictions[0]["status"] == "locked"
