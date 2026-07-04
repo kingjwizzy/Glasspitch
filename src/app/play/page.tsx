@@ -165,7 +165,10 @@ export default async function PlayPage() {
       ) : (
         [...days.entries()].map(([key, dayFixtures]) => (
           <section key={key} aria-label={dayLabel(dayFixtures[0].kickoff_utc, nowIso)}>
-            <h2 className="mb-3 font-display text-lg font-semibold tracking-tight text-fg">
+            {/* Sticky (RAMBO wave 3 #7a) — same top-14/backing treatment as the
+                home/matches day headings, so the offset math agrees across
+                every fixture-list surface on the site. */}
+            <h2 className="sticky top-14 z-10 mb-3 border-b border-line bg-bg/90 py-2 font-display text-lg font-semibold tracking-tight text-fg backdrop-blur-sm">
               {dayLabel(dayFixtures[0].kickoff_utc, nowIso)}
             </h2>
             <ul className="space-y-4">

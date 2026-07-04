@@ -65,9 +65,15 @@ export default function UpcomingFixtures({
     <div className="space-y-6">
       {[...groups.entries()].map(([key, group]) => (
         <div key={key}>
-          {/* The today group is introduced by the section header itself. */}
+          {/* The today group is introduced by the section header itself.
+              Sticky (RAMBO wave 3 #7a): pinned at `top-14` (56px — Header's
+              own rendered height, so the two sticky elements never overlap)
+              while its own day's fixtures scroll past, with an opaque-enough
+              backing (matching Header's `bg-bg/*` + `backdrop-blur-sm`
+              treatment) so scrolling cards never visually collide with the
+              pinned label. */}
           {key !== todayKey && (
-            <h3 className="mb-2 font-mono text-xs font-medium text-fg-dim">
+            <h3 className="sticky top-14 z-10 mb-2 border-b border-line bg-bg/90 py-2 font-mono text-xs font-medium text-fg-dim backdrop-blur-sm">
               {dayLabel(group[0].kickoff_utc, renderedAt)}
             </h3>
           )}

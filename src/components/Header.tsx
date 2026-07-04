@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import MobileNav from '@/components/MobileNav';
 import AuthNav from '@/components/AuthNav';
 import Logo from '@/components/Logo';
 
@@ -8,11 +7,14 @@ import Logo from '@/components/Logo';
 // must never branch on signed-in state at render time (that would force the
 // whole page dynamic). The signed-in vs signed-out affordance is the ONE thing
 // that can't be static, so it's delegated to two tiny client islands —
-// <AuthNav /> (desktop) and MobileNav (below md) — that read the session on the
-// client and swap "Sign in" for "Account". Everything else here stays static.
+// <AuthNav /> (desktop, rendered here) and MobileNav (below md, rendered as
+// BottomTabBar's 5th "More" slot since RAMBO wave 3 #6 — no longer rendered
+// in this header row) — that read the session on the client and swap
+// "Sign in" for "Account". Everything else here stays static.
 //
-// Exported so MobileNav — the below-md hamburger client island — renders the
-// same destinations from one source of truth instead of a duplicate list.
+// Exported so BottomTabBar and MobileNav — the below-md client islands —
+// render the same destinations from one source of truth instead of a
+// duplicate list.
 export const NAV = [
   { href: '/', label: 'Home' },
   { href: '/matches', label: 'Matches' },
@@ -28,6 +30,15 @@ export const NAV = [
   { href: '/ledger', label: 'Track record' },
   { href: '/about', label: 'About' },
 ] as const;
+
+// RAMBO wave 3 #6: the 4 destinations promoted into the persistent below-md
+// bottom tab bar (BottomTabBar.tsx) — thumb-reachable one-tap, rather than
+// two taps deep behind the hamburger. Kept here, beside NAV, as the single
+// place this split is decided: BottomTabBar renders these four as tabs (plus
+// a 5th "More" trigger for the rest), and MobileNav's hamburger panel renders
+// whatever's LEFT in NAV — the overflow — so the two never duplicate each
+// other's destinations.
+export const BOTTOM_TAB_HREFS = ['/', '/matches', '/play', '/ledger'] as const;
 
 export default function Header() {
   return (
@@ -67,7 +78,6 @@ export default function Header() {
           </Link>
         ) : null}
         <AuthNav />
-        <MobileNav />
       </div>
     </header>
   );

@@ -60,8 +60,11 @@ export default async function MatchesPage() {
               <div key={group.dateIso}>
                 {/* text-fg-dim, never text-fg-faint: the day label is meaningful
                     content at text-xs, and fg-faint is sub-AA (< 4.5:1) at small
-                    sizes (globals.css token note; same rule as CalibrationTable). */}
-                <h3 className="mb-2 font-mono text-xs font-medium text-fg-dim">
+                    sizes (globals.css token note; same rule as CalibrationTable).
+                    Sticky (RAMBO wave 3 #7a) — same top-14/backing treatment as
+                    the home page's UpcomingFixtures day headings, so the offset
+                    math agrees across both surfaces. */}
+                <h3 className="sticky top-14 z-10 mb-2 border-b border-line bg-bg/90 py-2 font-mono text-xs font-medium text-fg-dim backdrop-blur-sm">
                   {group.label}
                 </h3>
                 <FixtureList fixtures={group.fixtures} />

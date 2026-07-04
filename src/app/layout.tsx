@@ -3,6 +3,7 @@ import { Archivo, Hanken_Grotesk, IBM_Plex_Mono } from 'next/font/google';
 import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import Header from '@/components/Header';
+import BottomTabBar from '@/components/BottomTabBar';
 import Footer from '@/components/Footer';
 import { SITE_NAME, SITE_URL } from '@/lib/constants';
 import { jsonLdScript, organizationJsonLd, websiteJsonLd } from '@/lib/jsonld';
@@ -100,6 +101,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: '#0E1311',
   colorScheme: 'dark',
+  // RAMBO wave 3 #6: without `viewport-fit=cover`, `env(safe-area-inset-*)`
+  // always resolves to 0 — the persistent bottom tab bar (BottomTabBar.tsx)
+  // needs the real inset so its content never sits under a device's home
+  // indicator.
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({
@@ -112,7 +118,7 @@ export default function RootLayout({
       lang="en"
       className={`${archivo.variable} ${hanken.variable} ${plexMono.variable} dark h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-bg text-fg">
+      <body className="flex min-h-full flex-col bg-bg pb-[calc(3.5rem+env(safe-area-inset-bottom))] text-fg md:pb-0">
         {/* Site-wide entity JSON-LD (ARCHITECTURE.md §11) — consolidates every
             indexed page under one Organization/WebSite identity. Plain
             name + url only, no logo/marks (§13). Data, not executable JS, so
@@ -130,6 +136,10 @@ export default function RootLayout({
             disclaimer" region), so it's still on every page but no longer a
             banner above the fold. */}
         <Header />
+        {/* Persistent bottom tab bar (RAMBO wave 3 #6) — below `md` only; a
+            second, distinctly-labelled nav landmark from Header's own
+            `nav[aria-label="Primary"]` (see BottomTabBar.tsx). */}
+        <BottomTabBar />
         {/* W4: the shell widens to max-w-6xl at lg (header/main/footer together
             so edges align) and the home page composes a 12-col grid inside it. */}
         <main className="mx-auto w-full max-w-screen-md flex-1 px-4 py-6 lg:max-w-6xl">

@@ -1,11 +1,13 @@
 'use client';
 
-// Below-md hamburger nav — a small client island beside the (server-rendered)
-// Header (audit #2, CRITICAL: a 393px phone clipped the inline link row to
-// "Home | Ma…", hiding Chances/Leagues/Play/Track record/About). Header stays
-// a static Server Component; this is the one deliberate bit of client JS the
-// mobile nav needs, and it renders nothing at md+ (Header's own inline row
-// takes over there, unchanged).
+// Below-md OVERFLOW nav — a small client island rendered as the 5th ("More")
+// slot of BottomTabBar.tsx (RAMBO wave 3 #6; originally the standalone
+// hamburger beside Header — audit #2). Home/Matches/Play/Track record now
+// live as persistent bottom tabs, one thumb-tap away, so this panel only
+// carries what's LEFT: OVERFLOW_NAV below. Header stays a static Server
+// Component; this remains the one deliberate bit of client JS the mobile nav
+// needs, and it renders nothing at md+ (Header's own inline row takes over
+// there, unchanged).
 //
 // Dialog pattern (WAI-ARIA APG): focus moves into the panel on open and back
 // to the toggle button on close; Esc, a backdrop click, or a link click all
@@ -19,10 +21,18 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { CrossIcon } from '@/components/icons';
-import { NAV } from '@/components/Header';
+import { BOTTOM_TAB_HREFS, NAV } from '@/components/Header';
 import { useAuthState } from '@/components/useAuthState';
 
 const PREMIUM_LIVE = process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1';
+
+// Whatever isn't already one thumb-tap away on the bottom bar (Chances,
+// Leagues, Leaderboard, About, at time of writing) — computed from the same
+// NAV/BOTTOM_TAB_HREFS source of truth so the two can never silently drift
+// apart or duplicate a destination.
+const OVERFLOW_NAV = NAV.filter(
+  (item) => !(BOTTOM_TAB_HREFS as readonly string[]).includes(item.href),
+);
 
 function HamburgerIcon() {
   return (
@@ -92,7 +102,16 @@ export default function MobileNav() {
   const close = () => setOpen(false);
 
   return (
-    <div className="ml-auto md:hidden">
+    <>
+      {/* The 5th bottom-tab slot (RAMBO wave 3 #6). Its accessible name stays
+          "Open menu" / "Close menu" — unchanged from the pre-bar hamburger —
+          so the site-wide `expectPrimaryNavReachable` e2e helper (which every
+          spec relies on, not just this one) keeps finding it by that name at
+          any mobile viewport. The visible "More" caption is aria-hidden
+          rather than folded into the label: it's a REDUNDANT visual cue for
+          sighted users, not a replacement name, so there's no label/name
+          mismatch (WCAG 2.5.3) — a screen-reader user hears the (arguably
+          more informative) action name instead. */}
       <button
         ref={toggleRef}
         type="button"
@@ -100,9 +119,14 @@ export default function MobileNav() {
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-fg-dim transition-colors hover:text-fg"
+        className={`flex h-14 w-full flex-col items-center justify-center gap-0.5 text-micro transition-colors ${
+          open ? 'text-fg' : 'text-fg-dim'
+        }`}
       >
         {open ? <CrossIcon className="h-5 w-5" /> : <HamburgerIcon />}
+        <span aria-hidden="true" className={open ? 'font-medium' : ''}>
+          More
+        </span>
       </button>
 
       <div className={`fixed inset-0 z-30 ${open ? '' : 'hidden'}`}>
@@ -132,7 +156,7 @@ export default function MobileNav() {
             </button>
           </div>
           <ul className="mt-1 border-t border-line pt-1">
-            {NAV.map((item) => (
+            {OVERFLOW_NAV.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}
@@ -166,6 +190,6 @@ export default function MobileNav() {
           </ul>
         </div>
       </div>
-    </div>
+    </>
   );
 }
