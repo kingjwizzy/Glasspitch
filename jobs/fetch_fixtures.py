@@ -18,6 +18,12 @@ predictions closed out (``status='void_cancelled'``) so no ledger row is left
 in permanent limbo. A kickoff-time change on an existing fixture also
 reconciles its still-``published`` predictions' ``locked_at`` (see
 ``jobs/db.py``).
+
+Live match clock (migration 0011, UI-overhaul spec item #1): also stores the
+raw ``fixture.status.short`` code and ``fixture.status.elapsed``/``.extra``
+(added time) off this SAME already-fetched response, so match pages can
+render "67'"/"HT"/"90+2'" instead of just the word "Live" -- zero extra API
+calls, since this ~15-minutely poll already exists for lock/score detection.
 """
 
 from __future__ import annotations
@@ -145,6 +151,11 @@ class ParsedFixture:
     round: Optional[str]
     api_round: Optional[str]
     winner_api_team_id: Optional[int]
+    # Live match clock (migration 0011, UI-overhaul spec item #1) -- sourced
+    # from the SAME fixture.status node api_status_short already reads; null
+    # whenever the provider omits them (not started/finished/no stoppage).
+    elapsed_minute: Optional[int]
+    elapsed_extra_minute: Optional[int]
 
 
 def _parse_team(node: dict) -> ParsedTeam:
@@ -184,8 +195,16 @@ def parse_fixture(item: dict, *, default_season: int) -> ParsedFixture:
     league = item["league"]
     teams = item["teams"]
 
-    short = (fixture.get("status") or {}).get("short")
+    status_node = fixture.get("status") or {}
+    short = status_node.get("short")
     status = map_fixture_status(short)
+    # Live match clock (migration 0011): elapsed/extra come straight off this
+    # SAME status node -- no extra parsing, no extra API cost. Whatever the
+    # provider returns (an int, or absent/null) is stored as-is; API-Football
+    # itself nulls these outside of live play, so no separate status-based
+    # branching is needed here.
+    elapsed_minute = status_node.get("elapsed")
+    elapsed_extra_minute = status_node.get("extra")
 
     # Final score only when the match is finished; otherwise leave it null.
     # Prefer score.fulltime, falling back to the goals object when fulltime is
@@ -223,6 +242,8 @@ def parse_fixture(item: dict, *, default_season: int) -> ParsedFixture:
         round=normalize_round(api_round),
         api_round=api_round,
         winner_api_team_id=_parse_winner_api_team_id(teams, home, away),
+        elapsed_minute=elapsed_minute,
+        elapsed_extra_minute=elapsed_extra_minute,
     )
 
 
@@ -317,9 +338,11 @@ def run(
             for pf in parsed_league:
                 log.info(
                     "[dry-run] would upsert fixture api_id=%s: %s v %s kickoff=%s "
-                    "status=%s score=%s-%s round=%r winner_api_team_id=%s",
+                    "status=%s (short=%s elapsed=%s+%s) score=%s-%s round=%r "
+                    "winner_api_team_id=%s",
                     pf.api_fixture_id, pf.home.name, pf.away.name, pf.kickoff_utc,
-                    pf.status, pf.final_home_goals, pf.final_away_goals,
+                    pf.status, pf.api_status_short, pf.elapsed_minute,
+                    pf.elapsed_extra_minute, pf.final_home_goals, pf.final_away_goals,
                     pf.round, pf.winner_api_team_id,
                 )
             continue
@@ -360,6 +383,9 @@ def run(
                 round_name=pf.round,
                 api_round=pf.api_round,
                 winner_team_id=resolved_winner_team_id,
+                status_short=pf.api_status_short,
+                elapsed_minute=pf.elapsed_minute,
+                elapsed_extra_minute=pf.elapsed_extra_minute,
             )
             counts["fixtures_upserted"] += 1
 

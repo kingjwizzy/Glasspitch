@@ -60,7 +60,14 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   — the DEFINITIVE match winner, not derivable from the final score alone for
   a match decided by extra time/penalties (migration 0007; feeds
   `simulate_chances`' bracket progression, at zero extra API cost since it's
-  the SAME `/fixtures` payload already being fetched).
+  the SAME `/fixtures` payload already being fetched). Also stores the live
+  match clock (migration 0011): `fixtures.status_short` (the raw, granular
+  `fixture.status.short` code — `1H`/`HT`/`2H`/`ET`/`BT`/`P`/`FT`/`AET`/`PEN`/
+  `PST`/`CANC`, alongside the coarse `status` enum), `fixtures.elapsed_minute`
+  (`fixture.status.elapsed`), and `fixtures.elapsed_extra_minute`
+  (`fixture.status.extra`, added/stoppage time) — all three off the SAME
+  `/fixtures` response, null whenever the provider omits them (not
+  started/finished/no stoppage). Zero extra API cost.
 - **`fetch_predictions`** — for each fixture kicking off within
   `config.PREDICTION_FETCH_WINDOW_HOURS` (default 72h) with no `api-football`
   prediction yet: `GET /predictions?fixture={id}` **exactly once**, parse the

@@ -151,6 +151,9 @@ class SupabaseStore:
         round_name: Optional[str] = None,
         api_round: Optional[str] = None,
         winner_team_id: Optional[int] = None,
+        status_short: Optional[str] = None,
+        elapsed_minute: Optional[int] = None,
+        elapsed_extra_minute: Optional[int] = None,
     ) -> int:
         """Upsert one fixture, keyed on ``api_fixture_id``.
 
@@ -165,7 +168,10 @@ class SupabaseStore:
         (migration 0007, jobs/fetch_fixtures.py's ``normalize_round``/
         ``_parse_winner_api_team_id``) default to ``None`` so any OTHER
         caller of this method (there are none today, but the interface stays
-        backward compatible) keeps working unchanged.
+        backward compatible) keeps working unchanged. ``status_short`` /
+        ``elapsed_minute`` / ``elapsed_extra_minute`` (migration 0011, the
+        live match clock -- jobs/fetch_fixtures.py's ``parse_fixture``) follow
+        the same optional/backward-compatible convention.
         """
         existing = (
             self._client.table("fixtures")
@@ -188,6 +194,9 @@ class SupabaseStore:
             "round": round_name,
             "api_round": api_round,
             "winner_team_id": winner_team_id,
+            "status_short": status_short,
+            "elapsed_minute": elapsed_minute,
+            "elapsed_extra_minute": elapsed_extra_minute,
         }
         res = (
             self._client.table("fixtures")

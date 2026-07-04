@@ -143,6 +143,8 @@ export type Database = {
           api_round: string | null
           away_team_id: number
           created_at: string
+          elapsed_extra_minute: number | null
+          elapsed_minute: number | null
           final_away_goals: number | null
           final_home_goals: number | null
           home_team_id: number
@@ -151,6 +153,7 @@ export type Database = {
           league_id: number
           round: string | null
           status: string
+          status_short: string | null
           updated_at: string
           winner_team_id: number | null
         }
@@ -159,6 +162,8 @@ export type Database = {
           api_round?: string | null
           away_team_id: number
           created_at?: string
+          elapsed_extra_minute?: number | null
+          elapsed_minute?: number | null
           final_away_goals?: number | null
           final_home_goals?: number | null
           home_team_id: number
@@ -167,6 +172,7 @@ export type Database = {
           league_id: number
           round?: string | null
           status?: string
+          status_short?: string | null
           updated_at?: string
           winner_team_id?: number | null
         }
@@ -175,6 +181,8 @@ export type Database = {
           api_round?: string | null
           away_team_id?: number
           created_at?: string
+          elapsed_extra_minute?: number | null
+          elapsed_minute?: number | null
           final_away_goals?: number | null
           final_home_goals?: number | null
           home_team_id?: number
@@ -183,6 +191,7 @@ export type Database = {
           league_id?: number
           round?: string | null
           status?: string
+          status_short?: string | null
           updated_at?: string
           winner_team_id?: number | null
         }
