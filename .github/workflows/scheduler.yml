@@ -37,6 +37,18 @@ name: Jobs scheduler
 #                                   score_results' own */20 * * * * schedule
 #                                   entry (its own job block + its own
 #                                   `if: failure()` alert, not a shared one).
+#   compute_leaderboard every 20m — public opt-in "Beat the Model" leaderboard
+#                                   (improvement #5, migration 0009). Rebuilds
+#                                   leaderboard_standings from SCORED
+#                                   user_predictions vs the model's own scored
+#                                   Brier. DOWNSTREAM of score_user_predictions
+#                                   (which scores the picks) so it piggybacks
+#                                   on score_results' own */20 * * * * schedule
+#                                   entry too (its own job block + its own
+#                                   `if: failure()` alert, not a shared one),
+#                                   same pattern as score_user_predictions
+#                                   above. DB-only — makes NO football-API
+#                                   call.
 #   snapshot_probabilities daily 05:45 — v3 W5. Per-team Elo-derived win/draw/
 #                                   loss, clean-sheet, and expected-goals
 #                                   snapshots for upcoming fixtures + day-over-
@@ -94,6 +106,7 @@ name: Jobs scheduler
 #   score_results      72 runs x 0 requests                  =  0 req/day
 #   fetch_topscorers   1 run/day x 1 tracked league           =  1 req/day
 #   score_user_predictions 72 runs x 0 requests (DB-only)     =  0 req/day
+#   compute_leaderboard    72 runs x 0 requests (DB-only)     =  0 req/day
 #   snapshot_probabilities  1 run/day x 0 requests (DB-only)  =  0 req/day
 #   simulate_chances    2 runs/day x 0 requests (DB-only)     =  0 req/day
 #   ledger_integrity     1 run/day x 0 requests (DB + Storage only) = 0 req/day
@@ -129,6 +142,7 @@ on:
           - score_results
           - fetch_topscorers
           - score_user_predictions
+          - compute_leaderboard
           - snapshot_probabilities
           - simulate_chances
           - ledger_integrity
@@ -157,10 +171,10 @@ on:
     - cron: '30 6 * * *'     # simulate_chances   — daily 06:30 UTC (morning run)
     - cron: '15 22 * * *'    # simulate_chances   — daily 22:15 UTC (evening run, same job)
     - cron: '0 5 1 * *'      # keepalive          — 1st of the month, 05:00 UTC
-    # score_user_predictions has NO cron entry of its own -- it piggybacks on
-    # the EXISTING '*/20 * * * *' entry above (score_results' schedule), via
-    # its own `if:` guard below. Adding a second identical cron string would
-    # double-fire that time slot.
+    # score_user_predictions and compute_leaderboard have NO cron entry of
+    # their own -- both piggyback on the EXISTING '*/20 * * * *' entry above
+    # (score_results' schedule), each via its own `if:` guard below. Adding a
+    # second (or third) identical cron string would double-fire that time slot.
     # simulate_chances is the ONE job with TWO cron entries of its own (see
     # the pipeline comment above for why) -- its `if:` guard below matches
     # EITHER string; each fires the SAME job block once, not two overlapping
@@ -450,6 +464,65 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_NAME: score_user_predictions
+        run: |
+          set -euo pipefail
+          TITLE="[scheduler] ${JOB_NAME} failed"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+              --body "The scheduled **${JOB_NAME}** job failed. Run: ${RUN_URL}
+
+          This issue is reused (commented on, not duplicated) for future failures of the same job, until it's closed."
+          fi
+
+  # ---- every 20m: rebuild the public opt-in leaderboard (DB-only, no API) ----
+  # Improvement #5 (migration 0009). DOWNSTREAM of score_user_predictions (it
+  # reads SCORED user_predictions + the model's own scored Brier), so it
+  # piggybacks on score_results' OWN '*/20 * * * *' schedule entry too (shared
+  # cron string, separate job block + separate alert) -- the exact same
+  # pattern score_user_predictions uses relative to score_results above. No
+  # `needs:` between the three: none of the existing */20 jobs block on each
+  # other intra-tick, they rely on eventual consistency across ticks instead
+  # (a fixture scored this tick is picked up by the downstream job on the
+  # NEXT tick, 20 min later, same as score_user_predictions already does
+  # relative to score_results) -- adding `needs:` here would also force
+  # score_user_predictions to run whenever compute_leaderboard is manually
+  # dispatched alone, which breaks single-job testing via "Run workflow".
+  compute_leaderboard:
+    name: compute_leaderboard (Beat the Model public standings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: glasspitch-scheduler-compute_leaderboard
+      cancel-in-progress: false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'compute_leaderboard')) ||
+      github.event.schedule == '*/20 * * * *'
+    permissions:
+      contents: read
+      issues: write
+    # No API_FOOTBALL_KEY: this job never calls the football API (DB reads/writes only).
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+      - run: pip install -r jobs/requirements.txt
+      - name: Run compute_leaderboard
+        run: python -m jobs.compute_leaderboard ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: compute_leaderboard
         run: |
           set -euo pipefail
           TITLE="[scheduler] ${JOB_NAME} failed"
