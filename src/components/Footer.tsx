@@ -53,6 +53,14 @@ export default function Footer() {
             </li>
             <li>
               <Link
+                href="/leaderboard"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Leaderboard
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/premium"
                 className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
               >

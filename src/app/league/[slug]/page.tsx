@@ -5,7 +5,7 @@ import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
 import FixtureList from '@/components/FixtureList';
 import LedgerCallout from '@/components/match/LedgerCallout';
-import { getLeagueData, getAllLeagueSlugs } from '@/lib/queries/league';
+import { getLeagueData, getAllLeagueSlugs, getAllLeagueOptions } from '@/lib/queries/league';
 import type { FixtureRowView } from '@/lib/queries/fixtures';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
@@ -90,6 +90,13 @@ export default async function LeaguePage({ params }: LeaguePageProps) {
   const { name, country, season, upcoming, recent, record } = data;
   const teams = leagueTeams([...upcoming, ...recent]);
   const breadcrumb = breadcrumbJsonLd([{ name, url: `/league/${slug}` }]);
+
+  // Dense internal linking (ARCHITECTURE.md §11; improvement #4): this page
+  // already links every one of its own fixtures and teams, so the fresh link
+  // equity here is OUTWARD — to sibling competitions (today just one league
+  // exists, so this is mostly future-proofing for club football §14/§16).
+  // Best-effort, never blocks the page.
+  const otherLeagues = (await getAllLeagueOptions()).filter((l) => l.slug !== slug).slice(0, 6);
 
   // Minimal SportsEvent JSON-LD for the tournament — plain names only, no
   // official marks, no odds (ARCHITECTURE.md §13). schema.org SportsEvent
@@ -203,6 +210,33 @@ export default async function LeaguePage({ params }: LeaguePageProps) {
           </ul>
         </section>
       )}
+
+      {/* More competitions (improvement #4) — an always-on link to the browse
+          index plus any sibling leagues, so the outward link equity exists
+          from day one even while v1 tracks a single competition. */}
+      <section aria-labelledby="other-leagues-heading">
+        <SectionHeader id="other-leagues-heading" title="More competitions" />
+        <ul className="flex flex-wrap gap-2">
+          {otherLeagues.map((l) => (
+            <li key={l.slug}>
+              <Link
+                href={`/league/${l.slug}`}
+                className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-3.5 text-sm text-fg transition-colors hover:bg-surface-2"
+              >
+                {l.name}
+              </Link>
+            </li>
+          ))}
+          <li>
+            <Link
+              href="/leagues"
+              className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface-2 px-3.5 text-sm text-green transition-colors hover:text-green-bright"
+            >
+              Browse all competitions
+            </Link>
+          </li>
+        </ul>
+      </section>
 
       <LedgerCallout />
 

@@ -312,6 +312,67 @@ export async function getMySettledPicks(
   return out;
 }
 
+// ── my record vs the model (RAMBO wave 2 improvement #5) ───────────────────
+
+export interface MyRecordVsModel {
+  /** Every one of the visitor's own scored picks — misses count too. */
+  scored: number;
+  /** Mean Brier over ALL of `scored` (null only when `scored === 0`). */
+  meanBrier: number | null;
+  /** The subset of `scored` where the model ALSO has a scored call for the
+   *  same fixture (apples to apples — the same restriction the pool
+   *  leaderboard's "Model, same picks" column uses). */
+  comparable: number;
+  /** The model's mean Brier over exactly the `comparable` subset (null when
+   *  `comparable === 0`). */
+  modelMeanBrier: number | null;
+  /** `modelMeanBrier - meanBrier` over the comparable subset — positive means
+   *  the visitor is ahead of the model (lower Brier is sharper). Null when
+   *  there is nothing comparable yet. Deliberately NOT computed from
+   *  `meanBrier` (all scored picks) against `modelMeanBrier` (comparable
+   *  subset only) — mixing denominators would silently misstate the margin. */
+  margin: number | null;
+}
+
+/**
+ * A pure aggregate over the visitor's OWN settled picks (from
+ * `getMySettledPicks`) — no new DB read. This is a PRIVATE, per-user summary
+ * for /play ("Your record vs the model"), shown for any signed-in user with
+ * scored picks regardless of their public-leaderboard opt-in: opting into
+ * /leaderboard controls whether this record is ALSO published under a chosen
+ * display name; it has no bearing on whether the visitor can see their own
+ * record here.
+ */
+export function buildMyRecordVsModel(settled: SettledPick[]): MyRecordVsModel {
+  const scored = settled.length;
+  const meanBrier =
+    scored > 0 ? settled.reduce((s, p) => s + p.brier_score, 0) / scored : null;
+
+  const comparablePairs = settled
+    .map((p) => p.model?.brier_score ?? null)
+    .filter((b): b is number => b !== null);
+  const comparable = comparablePairs.length;
+  const modelMeanBrier =
+    comparable > 0 ? comparablePairs.reduce((s, b) => s + b, 0) / comparable : null;
+
+  // The margin must compare the SAME subset both ways — recompute the
+  // visitor's own mean over exactly the comparable picks, not `meanBrier`
+  // (which may include picks the model never scored).
+  const comparableMine = settled
+    .filter((p) => p.model?.brier_score !== null && p.model?.brier_score !== undefined)
+    .map((p) => p.brier_score);
+  const comparableMeanMine =
+    comparableMine.length > 0
+      ? comparableMine.reduce((s, b) => s + b, 0) / comparableMine.length
+      : null;
+  const margin =
+    modelMeanBrier !== null && comparableMeanMine !== null
+      ? modelMeanBrier - comparableMeanMine
+      : null;
+
+  return { scored, meanBrier, comparable, modelMeanBrier, margin };
+}
+
 // ── pools ────────────────────────────────────────────────────────────────────
 
 export interface PoolSummary {

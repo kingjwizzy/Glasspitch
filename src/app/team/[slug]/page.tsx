@@ -7,7 +7,9 @@ import FixtureList from '@/components/FixtureList';
 import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import TeamFlag from '@/components/TeamFlag';
+import RelatedFixtures from '@/components/RelatedFixtures';
 import { getTeamData, getAllTeamSlugs } from '@/lib/queries/team';
+import { getRelatedFixtures, getSiblingTeams } from '@/lib/queries/related';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
@@ -92,6 +94,19 @@ export default async function TeamPage({ params }: TeamPageProps) {
     { name, url: `/team/${data.slug}` },
   ]);
 
+  // Dense internal linking (ARCHITECTURE.md §11; improvement #4). Two
+  // best-effort, independent reads — neither ever blocks the page:
+  //  1. Every OTHER team in this competition (closes a real gap: today only
+  //     the league page cross-links team pages to each other).
+  //  2. This team's OWN upcoming/recent fixtures already fill the page, so
+  //     only the "same day" and "competition" groups from getRelatedFixtures
+  //     are shown for the team's next fixture — the "this team's other
+  //     fixtures" groups would just repeat the lists above.
+  const [siblingTeams, nextFixtureRelated] = await Promise.all([
+    leagueSlug ? getSiblingTeams(leagueSlug, data.slug) : Promise.resolve([]),
+    upcoming.length > 0 ? getRelatedFixtures(upcoming[0].id) : Promise.resolve(null),
+  ]);
+
   return (
     <article className="space-y-8">
       <script
@@ -170,6 +185,43 @@ export default async function TeamPage({ params }: TeamPageProps) {
           emptyMessage="No results in our record yet — predictions appear here once they're published and scored."
         />
       </section>
+
+      {/* ── Other teams in the competition (audit gap: only the league page
+          cross-linked team pages to each other — improvement #4). ────────── */}
+      {siblingTeams.length > 0 && (
+        <section aria-labelledby="sibling-teams-heading">
+          <SectionHeader
+            id="sibling-teams-heading"
+            title={league ? `Also in ${league}` : 'Other teams'}
+          />
+          <ul className="flex flex-wrap gap-2">
+            {siblingTeams.map((t) => (
+              <li key={t.slug}>
+                <Link
+                  href={`/team/${t.slug}`}
+                  className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-3.5 text-sm text-fg transition-colors hover:bg-surface-2"
+                >
+                  {t.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {nextFixtureRelated && (
+        <RelatedFixtures
+          headingId="related-heading"
+          heading="More around the next fixture"
+          description={`Other matches around ${name}’s next kickoff.`}
+          groups={[
+            { heading: 'Same day', items: nextFixtureRelated.sameDay },
+            ...(league
+              ? [{ heading: `More in ${league}`, items: nextFixtureRelated.leagueSiblings }]
+              : []),
+          ]}
+        />
+      )}
 
       <LedgerCallout />
 

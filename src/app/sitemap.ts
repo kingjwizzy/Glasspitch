@@ -63,6 +63,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/board`, changeFrequency: 'daily', priority: 0.7 },
     { url: `${SITE_URL}/board/ticker`, changeFrequency: 'daily', priority: 0.5 },
     { url: `${SITE_URL}/play`, changeFrequency: 'weekly', priority: 0.5 },
+    // Beat the Model leaderboard (RAMBO wave 2 #5) — public, opt-in-only
+    // content refreshed by the nightly job; honest empty state until players
+    // opt in, same treatment as /board above.
+    { url: `${SITE_URL}/leaderboard`, changeFrequency: 'daily', priority: 0.4 },
     { url: `${SITE_URL}/about`, changeFrequency: 'weekly', priority: 0.6 },
     { url: `${SITE_URL}/methodology`, changeFrequency: 'monthly', priority: 0.5 },
     {

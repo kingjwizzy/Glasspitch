@@ -10,7 +10,9 @@ import LedgerCallout from '@/components/match/LedgerCallout';
 import DeeperReadCallout from '@/components/match/DeeperReadCallout';
 import InsightsPanel from '@/components/match/InsightsPanel';
 import ShareRow from '@/components/ShareRow';
+import RelatedFixtures from '@/components/RelatedFixtures';
 import { getMatchData, type MatchData } from '@/lib/queries/match';
+import { getRelatedFixtures } from '@/lib/queries/related';
 import {
   getOpenMatchFixtureId,
   getOpenMatchInsights,
@@ -196,6 +198,9 @@ export default async function MatchPage({ params }: MatchPageProps) {
 
   const hasForm = data.homeForm.length > 0 || data.awayForm.length > 0;
   const shareText = buildShareText(data);
+  // Dense internal linking (ARCHITECTURE.md §11 "the growth engine";
+  // improvement #4) — best-effort, never blocks the page (see related.ts).
+  const related = await getRelatedFixtures(data.id);
 
   const breadcrumb = breadcrumbJsonLd([
     ...(data.league && data.leagueSlug
@@ -313,6 +318,20 @@ export default async function MatchPage({ params }: MatchPageProps) {
       ) : (
         <DeeperReadCallout fixtureId={data.id} />
       )}
+
+      <RelatedFixtures
+        headingId="related-heading"
+        heading="More matchday calls"
+        description="Other fixtures worth a look from here — every group is capped and self-excluded, never a repeat of this match."
+        groups={[
+          { heading: 'Also today', items: related.sameDay },
+          ...(data.league
+            ? [{ heading: `More in ${data.league}`, items: related.leagueSiblings }]
+            : []),
+          { heading: `More from ${data.home}`, items: related.homeTeamOther },
+          { heading: `More from ${data.away}`, items: related.awayTeamOther },
+        ]}
+      />
 
       <LedgerCallout />
 

@@ -3,9 +3,12 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getMySubscription } from '@/lib/queries/subscription';
+import { getMyLeaderboardPrefs } from '@/lib/queries/leaderboard';
 import { signOut } from '@/lib/auth/actions';
+import { updateLeaderboardOptInAction } from './actions';
 import { formatDateShort } from '@/lib/format';
 import { PLAN_LABEL } from '@/lib/stripe/plans';
+import { LEADERBOARD_DISPLAY_NAME_MAX } from '@/lib/constants';
 import type { SubscriptionStatus } from '@/lib/types';
 
 // /account — dynamic, authed (ARCHITECTURE.md §4 v2). Out of the public nav,
@@ -29,7 +32,12 @@ const STATUS_LABEL: Record<SubscriptionStatus, string> = {
 };
 
 interface AccountPageProps {
-  searchParams: Promise<{ checkout?: string; try?: string }>;
+  searchParams: Promise<{
+    checkout?: string;
+    try?: string;
+    leaderboardError?: string;
+    leaderboardSaved?: string;
+  }>;
 }
 
 // Neutral link label for the "you don't have Premium" empty state (audit
@@ -42,14 +50,18 @@ function premiumUpsellLabel(): string {
 }
 
 export default async function AccountPage({ searchParams }: AccountPageProps) {
-  const { checkout, try: attemptParam } = await searchParams;
+  const { checkout, try: attemptParam, leaderboardError, leaderboardSaved } =
+    await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect('/login?next=/account');
 
-  const subscription = await getMySubscription(supabase, user.id);
+  const [subscription, leaderboardPrefs] = await Promise.all([
+    getMySubscription(supabase, user.id),
+    getMyLeaderboardPrefs(supabase, user.id),
+  ]);
   const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
   const isActive = subscription?.status === 'active';
 
@@ -198,6 +210,89 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
             )}
           </div>
         )}
+      </section>
+
+      <section aria-labelledby="leaderboard-heading" className="space-y-3">
+        <h2
+          id="leaderboard-heading"
+          className="font-display text-lg font-semibold tracking-tight text-fg"
+        >
+          Leaderboard
+        </h2>
+        {/* Explicit privacy statement (non-negotiable — task spec): plainly
+            says WHAT publishes, that it's OFF by default, and that opting out
+            is reversible. This is consent copy, not marketing copy. */}
+        <p className="text-sm leading-relaxed text-fg-dim">
+          Opting in publishes your chosen display name and your Brier-vs-model
+          record from{' '}
+          <Link href="/play" className="text-green underline hover:text-green-bright">
+            Beat the Model
+          </Link>{' '}
+          on the public{' '}
+          <Link href="/leaderboard" className="text-green underline hover:text-green-bright">
+            leaderboard
+          </Link>{' '}
+          page — no email, no other account details. It is off by default.
+          You can opt out any time below; that removes you from the next
+          nightly rebuild of the board.
+        </p>
+
+        {leaderboardError === 'name' && (
+          <p role="alert" className="text-xs font-medium text-miss-bright">
+            Enter a display name between 1 and 24 characters to opt in.
+          </p>
+        )}
+        {leaderboardError === 'save' && (
+          <p role="alert" className="text-xs font-medium text-miss-bright">
+            Could not save your leaderboard preference — please try again.
+          </p>
+        )}
+        {leaderboardSaved === '1' && !leaderboardError && (
+          <p role="status" className="text-xs font-medium text-green-bright">
+            Saved.
+          </p>
+        )}
+
+        <form
+          action={updateLeaderboardOptInAction}
+          className="space-y-4 rounded-2xl border border-line bg-surface p-5"
+        >
+          <label
+            htmlFor="leaderboardOptIn"
+            className="flex min-h-11 cursor-pointer items-center gap-3"
+          >
+            <input
+              id="leaderboardOptIn"
+              name="leaderboardOptIn"
+              type="checkbox"
+              defaultChecked={leaderboardPrefs.optIn}
+              className="h-5 w-5 shrink-0 rounded border-line bg-surface-2 accent-green"
+            />
+            <span className="text-sm text-fg">Show me on the public leaderboard</span>
+          </label>
+
+          <div className="space-y-1.5">
+            <label htmlFor="leaderboardDisplayName" className="block text-xs text-fg-dim">
+              Display name (1–24 characters, shown publicly if you opt in)
+            </label>
+            <input
+              id="leaderboardDisplayName"
+              name="leaderboardDisplayName"
+              type="text"
+              maxLength={LEADERBOARD_DISPLAY_NAME_MAX}
+              defaultValue={leaderboardPrefs.displayName ?? ''}
+              placeholder="e.g. Pitch Analyst"
+              className="min-h-11 w-full rounded-lg border border-line bg-surface-2 px-3 text-sm text-fg placeholder:text-fg-faint"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-green px-4 text-sm font-medium text-bg transition-colors hover:bg-green-bright"
+          >
+            Save leaderboard preference
+          </button>
+        </form>
       </section>
 
       <section aria-labelledby="session-heading" className="space-y-3">

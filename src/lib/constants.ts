@@ -66,6 +66,13 @@ function resolveSiteUrl(): string {
 
 export const SITE_URL = resolveSiteUrl();
 
+// Leaderboard display-name length cap (RAMBO wave 2 improvement #5) — shared
+// between the /account opt-in server action (validation) and its form's
+// `maxLength` (UX) so the two can never drift. Lives here, not in
+// account/actions.ts, because a "use server" file may only export async
+// functions.
+export const LEADERBOARD_DISPLAY_NAME_MAX = 24;
+
 // Season floor for every web read that surfaces predictions/fixtures as "the
 // record" (ledger, homepage, team/league fixture lists, match lookups, the
 // sitemap's match URLs). Defence in depth against the DB's dev-seed data

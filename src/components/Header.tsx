@@ -12,7 +12,7 @@ import Logo from '@/components/Logo';
 // client and swap "Sign in" for "Account". Everything else here stays static.
 //
 // Exported so MobileNav — the below-md hamburger client island — renders the
-// same seven destinations from one source of truth instead of a duplicate list.
+// same destinations from one source of truth instead of a duplicate list.
 export const NAV = [
   { href: '/', label: 'Home' },
   { href: '/matches', label: 'Matches' },
@@ -24,6 +24,7 @@ export const NAV = [
   // mechanics). /play itself renders a static explainer for anonymous
   // visitors, so this stays a plain link with no auth awareness.
   { href: '/play', label: 'Play' },
+  { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/ledger', label: 'Track record' },
   { href: '/about', label: 'About' },
 ] as const;
@@ -35,7 +36,7 @@ export default function Header() {
         <Link href="/" className="inline-flex min-h-11 shrink-0 items-center">
           <Logo />
         </Link>
-        {/* Below md there's no room for seven inline links (a phone-width
+        {/* Below md there's no room for this many inline links (a phone-width
             viewport clips this row hard) — they move into MobileNav's
             hamburger overlay instead, so this row is desktop-only. */}
         <nav aria-label="Primary" className="hidden min-w-0 flex-1 md:block">
