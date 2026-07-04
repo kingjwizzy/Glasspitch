@@ -1,5 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { SITE_NAME } from '@/lib/constants';
+import { floodlitMarkDataUri } from '@/lib/logoMark';
 
 // Default site-wide social share image (ARCHITECTURE.md §11) — generated at
 // request time from DESIGN.md tokens, plain text only (no crests/marks, §13),
@@ -27,7 +28,7 @@ export default async function OpengraphImage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-          <div style={{ width: 20, height: 20, borderRadius: 6, background: '#35b27a' }} />
+          <img width={52} height={52} src={floodlitMarkDataUri(52, 'tile')} alt="" />
           <div style={{ fontSize: 40, fontWeight: 700, letterSpacing: -1 }}>{SITE_NAME}</div>
         </div>
         <div

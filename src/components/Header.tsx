@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import MobileNav from '@/components/MobileNav';
 import AuthNav from '@/components/AuthNav';
-import { SITE_NAME } from '@/lib/constants';
+import Logo from '@/components/Logo';
 
 // Static Server Component — no "use client", no auth/session awareness: the
 // header is rendered by every public page, including cached ISR pages, so it
@@ -32,11 +32,8 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-bg/85 backdrop-blur-sm">
       <div className="mx-auto flex w-full max-w-screen-md items-center gap-2 px-4 py-1.5 lg:max-w-6xl">
-        <Link
-          href="/"
-          className="inline-flex min-h-11 shrink-0 items-center font-display text-lg font-semibold tracking-tight text-fg"
-        >
-          {SITE_NAME}
+        <Link href="/" className="inline-flex min-h-11 shrink-0 items-center">
+          <Logo />
         </Link>
         {/* Below md there's no room for seven inline links (a phone-width
             viewport clips this row hard) — they move into MobileNav's
