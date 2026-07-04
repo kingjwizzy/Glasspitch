@@ -28,7 +28,7 @@ import 'server-only';
 // confirm_token is ROTATED once used (single-use, per the migration's
 // documented convention); tokens are uuids generated here.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export function emailCaptureEnabled(): boolean {
   return process.env.EMAIL_CAPTURE_ENABLED === '1';
@@ -78,6 +78,37 @@ export function isMissingTableError(error: { code?: string; message?: string } |
     return true;
   }
   return /email_subscribers/i.test(error.message ?? '') && /find|exist/i.test(error.message ?? '');
+}
+
+// ── Send throttle support (audit fix #1) ────────────────────────────────────
+// Backs the `request_email_send(p_email, p_ip_hash)` atomic RPC the subscribe
+// route calls, server-side, before ever asking Resend to send. We never
+// store or log a raw IP (GDPR-conscious, matches the rest of §13) — only a
+// one-way SHA-256 hash of it goes anywhere, and only into the service-role-
+// only `email_send_log` table via the RPC.
+
+/**
+ * Best-effort client IP for throttling purposes ONLY — never stored raw, only
+ * hashed (see `hashIp`). `x-forwarded-for` is set by Vercel/most proxies as
+ * `client, proxy1, proxy2, …`; the first entry is the original client. Falls
+ * back to `x-real-ip`, then a constant sentinel so a request with neither
+ * header still throttles (as one shared "unknown" bucket) rather than
+ * bypassing the limit entirely.
+ */
+export function clientIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  const first = forwardedFor?.split(',')[0]?.trim();
+  if (first) return first;
+  const realIp = request.headers.get('x-real-ip')?.trim();
+  if (realIp) return realIp;
+  return 'unknown';
+}
+
+/** One-way SHA-256 hex digest of an IP address — what actually reaches the
+ *  database via `request_email_send`'s `p_ip_hash` param. The raw IP itself
+ *  is never persisted or logged anywhere. */
+export function hashIp(ip: string): string {
+  return createHash('sha256').update(ip).digest('hex');
 }
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';

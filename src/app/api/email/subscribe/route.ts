@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin';
 import { SITE_URL } from '@/lib/constants';
 import {
+  clientIp,
   emailCaptureEnabled,
   emailSendConfigured,
+  hashIp,
   isMissingTableError,
   newToken,
   normalizeEmail,
@@ -112,6 +114,27 @@ export async function POST(request: Request): Promise<Response> {
       console.error('email/subscribe: insert failed', error.message);
       return unavailable();
     }
+  }
+
+  // Audit fix #1: atomic per-address/per-IP/global throttle, checked AND
+  // recorded in one round trip by the RPC, over this route's own
+  // service-role client — the same client that already writes
+  // email_subscribers directly above. A `false` return means DO NOT send;
+  // we still return the exact same quiet redirect below so the response
+  // can never be used to enumerate whether an address is being throttled
+  // (no behaviour change at all when under the limit — see
+  // request_email_send's own thresholds in migration 0009).
+  const ipHash = hashIp(clientIp(request));
+  const { data: sendAllowed, error: throttleError } = await admin.rpc('request_email_send', {
+    p_email: email,
+    p_ip_hash: ipHash,
+  });
+  if (throttleError) {
+    console.error('email/subscribe: throttle check failed', throttleError.message);
+    return unavailable();
+  }
+  if (!sendAllowed) {
+    return NextResponse.redirect(new URL('/email/sent', SITE_URL), 303);
   }
 
   const confirmUrl = `${SITE_URL}/api/email/confirm?token=${confirmToken}`;

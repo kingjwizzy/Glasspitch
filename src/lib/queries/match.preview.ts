@@ -43,6 +43,9 @@ interface Spec {
   logLoss?: number;
   voided?: boolean;
   noPrediction?: boolean;
+  /** Illustrative "what's driving this call" free narrative (improvement
+   *  #6); omitted → null, exercising the "omit gracefully" render path. */
+  narrative?: string;
   homeForm: FormResult[];
   awayForm: FormResult[];
 }
@@ -83,6 +86,7 @@ function build(s: Spec): MatchData {
           final_home_goals: final ? final[0] : null,
           final_away_goals: final ? final[1] : null,
           scored_at: s.predStatus === 'scored' ? scoredAtFor(s.kickoff) : null,
+          narrative: s.narrative ?? null,
         };
   return {
     id: s.id,
@@ -118,6 +122,8 @@ const SPECS: Record<number, Spec> = {
     result: 'home',
     brier: 0.24,
     logLoss: 0.48,
+    narrative:
+      "Spain have scored freely across their recent matches, while Costa Rica's defence has conceded heavily against stronger opposition — that gap in recent form is the main driver behind this call.",
     homeForm: form([
       ['W', 2, 0, 'Germany', true],
       ['W', 1, 0, 'Japan', false],
@@ -191,6 +197,8 @@ const SPECS: Record<number, Spec> = {
     probs: [0.55, 0.26, 0.19],
     predicted: [2, 0],
     predStatus: 'published',
+    narrative:
+      "Brazil's recent home form has been strong, while Switzerland have found goals harder to come by away from home — that difference shapes the probabilities here.",
     homeForm: form([
       ['W', 2, 0, 'Serbia', true],
       ['W', 1, 0, 'Switzerland', true],

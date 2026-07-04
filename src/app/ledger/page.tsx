@@ -4,11 +4,12 @@ import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
 import LedgerTable from '@/components/ledger/LedgerTable';
 import CalibrationTable from '@/components/ledger/CalibrationTable';
+import CalibrationDiagram from '@/components/ledger/CalibrationDiagram';
 import EmptyStateSpot from '@/components/art/EmptyStateSpot';
 import ShareRow from '@/components/ShareRow';
 import { getLedgerData } from '@/lib/queries/ledger';
 import { getRecordFigures } from '@/lib/queries/recordSummary';
-import { pct, recordShareText } from '@/lib/format';
+import { calibrationRead, pct, recordShareText } from '@/lib/format';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL, THIRD_PARTY_LABEL } from '@/lib/constants';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so the record
@@ -171,16 +172,25 @@ export default async function LedgerPage() {
             every metric so the record is honest about its own limits.
           </p>
 
-          <section aria-labelledby="calibration-heading">
-            <SectionHeader id="calibration-heading" title="Calibration" />
+          {/* "checking our work" anchor/section (RAMBO wave 2 #3): the heading
+              id/aria-labelledby stay "calibration-heading" (pre-existing,
+              still referenced by e2e/smoke.spec.ts's section locator), and
+              `id="checking-our-work"` is an ADDITIONAL section-level anchor
+              tying the sentence + diagram + table together. */}
+          <section aria-labelledby="calibration-heading" id="checking-our-work">
+            <SectionHeader id="calibration-heading" title="Calibration — checking our work" />
             <p className="mb-3 max-w-prose text-sm leading-relaxed text-fg-dim">
               Calibration asks a simple question: when we say 30%, does it happen
               about 30% of the time? Each band groups every home, draw and away
               probability we assigned, so {summary.count} matches give{' '}
               <span className="font-mono">{summary.count * 3}</span> data points.
-              Well-calibrated means the two right-hand columns roughly agree.
+              {' '}
+              {calibrationRead(calibration)}
             </p>
-            <CalibrationTable bins={calibration} />
+            <div className="grid gap-4 lg:grid-cols-[280px_1fr] lg:items-start">
+              <CalibrationDiagram bins={calibration} />
+              <CalibrationTable bins={calibration} />
+            </div>
           </section>
 
           {/* Reserved ad slot — built-ready but renders nothing in v1 (§4, §13). */}

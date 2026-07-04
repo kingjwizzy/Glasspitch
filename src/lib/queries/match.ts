@@ -39,6 +39,11 @@ export interface MatchPrediction {
   final_away_goals: number | null;
   /** When the scoring job wrote the result; null until `status === 'scored'`. */
   scored_at: string | null;
+  /** Free, plain-language "what's driving this call" summary (improvement
+   *  #6) — nullable, jobs-written, analysis framing only, never odds/betting
+   *  language or a guaranteed edge (§9/§13). Null for older rows not yet
+   *  backfilled, or for the (never-displayed) inhouse-elo model. */
+  narrative: string | null;
 }
 
 /** One past result from a single team's perspective (for the form strip). */
@@ -97,7 +102,7 @@ const MATCH_SELECT = `
   league:leagues!fixtures_league_id_fkey!inner(name, slug, season),
   predictions(prob_home, prob_draw, prob_away, predicted_home_goals, predicted_away_goals,
     status, source, published_at, locked_at, result, brier_score, log_loss,
-    final_home_goals, final_away_goals, scored_at)
+    final_home_goals, final_away_goals, scored_at, narrative)
 `;
 
 const FORM_SELECT = `
@@ -131,6 +136,7 @@ interface RawPrediction {
   final_home_goals: number | null;
   final_away_goals: number | null;
   scored_at: string | null;
+  narrative: string | null;
 }
 interface RawMatchFixture {
   id: number;
@@ -230,6 +236,7 @@ function mapPrediction(p: RawPrediction): MatchPrediction {
     final_home_goals: p.final_home_goals,
     final_away_goals: p.final_away_goals,
     scored_at: p.scored_at,
+    narrative: p.narrative,
   };
 }
 

@@ -12,8 +12,12 @@
 //      `profiles`/`subscriptions` via FK constraints rather than writing a
 //      billing row directly.
 //   3. src/app/api/email/* (W6, §5 v3 email-capture amendment) — the ONE
-//      writer of `email_subscribers`, and of that table only (double opt-in
-//      subscribe/confirm/unsubscribe; the table has zero anon access).
+//      writer of `email_subscribers` (double opt-in subscribe/confirm/
+//      unsubscribe; the table has zero anon access). The subscribe route
+//      additionally calls the `request_email_send` RPC (audit fix #1) before
+//      sending, which records a throttled-send attempt into `email_send_log`
+//      — still reached only through this same service-role client, never a
+//      second admin surface.
 //   4. src/lib/queries/openMatch.ts's `getOpenMatchInsights` (W6) — a
 //      READ-ONLY exception: renders ONE deterministic match's premium
 //      `fixture_insights` into the public cached match page per day ("open

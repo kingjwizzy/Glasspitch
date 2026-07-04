@@ -407,6 +407,77 @@ export function recordShareText(count: number, hits: number): string {
   return `${hits} of ${count} calls landed so far — the full scored record, misses included.`;
 }
 
+// ── Calibration reliability read (RAMBO wave 2 #3) ─────────────────────────
+
+/** Structural (not imported) shape matching `CalibrationBin` from
+ *  lib/queries/ledger.ts — kept local, plain-number-only, so this stays a
+ *  pure, data-source-agnostic formatter with no dependency the other way
+ *  (ledger.ts already imports from this module; importing its type back
+ *  here would be circular). Any object with these three fields — including
+ *  a real `CalibrationBin` — satisfies it. */
+export interface CalibrationPoint {
+  n: number;
+  predictedAvg: number | null;
+  observedRate: number | null;
+}
+
+/** Below this many total (probability, outcome) data points across every
+ *  band, the record is too thin to characterise honestly — matches the
+ *  ledger page's own "small samples are noisy" caveat rather than asserting
+ *  a false confidence this early (§10). */
+const MIN_CALIBRATION_POINTS = 30;
+
+/** A weighted mean absolute gap under this (5 percentage points) reads as
+ *  "well-calibrated"; at or above it, still honestly summarised but flagged
+ *  as rougher. A judgement call for plain-language framing, not a formal
+ *  statistical threshold. */
+const WELL_CALIBRATED_GAP = 0.05;
+
+/**
+ * One honest, plain-language sentence summarising how well-calibrated the
+ * record is — e.g. "When we say 60%, it lands about 58% of the time." —
+ * derived ONLY from the same per-band figures the reliability diagram and
+ * CalibrationTable already show (never a separate computation path that
+ * could drift from what a visitor can verify on the same page). Shows ONLY
+ * the displayed third-party model's calibration; `bins` must never be built
+ * from the in-house Elo model (§9, enforced by buildCalibration() only ever
+ * being called on the displayed-source rows — this function has no way to
+ * tell the difference, so that guarantee lives at the call site).
+ *
+ * Picks the band with the most data points as the one named in the
+ * sentence — the band the record can speak to most confidently — and is
+ * honest about a too-small sample rather than a headline number nobody
+ * should trust yet.
+ */
+export function calibrationRead(bins: CalibrationPoint[]): string {
+  const populated = bins.filter(
+    (b): b is CalibrationPoint & { predictedAvg: number; observedRate: number } =>
+      b.n > 0 && b.predictedAvg !== null && b.observedRate !== null,
+  );
+  const total = populated.reduce((sum, b) => sum + b.n, 0);
+
+  if (total === 0) {
+    return 'No scored predictions yet, so there is nothing to check — calibration appears here once calls are scored.';
+  }
+  if (total < MIN_CALIBRATION_POINTS) {
+    return `Only ${total} data point${total === 1 ? '' : 's'} scored so far — too early to say how well-calibrated the record is.`;
+  }
+
+  const weightedGap =
+    populated.reduce(
+      (sum, b) => sum + b.n * Math.abs(b.observedRate - b.predictedAvg),
+      0,
+    ) / total;
+  const busiest = populated.reduce((a, b) => (b.n > a.n ? b : a));
+  const predictedPct = pct(busiest.predictedAvg);
+  const observedPct = pct(busiest.observedRate);
+
+  if (weightedGap < WELL_CALIBRATED_GAP) {
+    return `Well-calibrated overall — when we say ${predictedPct}, it lands about ${observedPct} of the time.`;
+  }
+  return `Roughly calibrated — when we say ${predictedPct}, it lands about ${observedPct} of the time, though some bands drift further from the diagonal than others.`;
+}
+
 /**
  * The honest one-line "I beat the model" read (kick plan #4) — ONLY ever
  * called when the visitor's own Brier is strictly lower than the model's for

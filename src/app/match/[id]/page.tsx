@@ -244,6 +244,13 @@ export default async function MatchPage({ params }: MatchPageProps) {
         />
       </section>
 
+      {prediction?.narrative && (
+        <section aria-labelledby="narrative-heading">
+          <SectionHeader id="narrative-heading" title="What's driving this call" />
+          <p className="text-sm leading-relaxed text-fg-dim">{prediction.narrative}</p>
+        </section>
+      )}
+
       {scored && (
         <section aria-labelledby="result-heading">
           <SectionHeader id="result-heading" title="How the call landed" />
