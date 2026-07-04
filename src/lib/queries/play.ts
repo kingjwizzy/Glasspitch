@@ -14,7 +14,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/database.types';
 import { MIN_SEASON } from '@/lib/constants';
-import type { PredictionStatus } from '@/lib/types';
+import type { MatchResult, PredictionStatus } from '@/lib/types';
 import { VOID_STATUSES } from '@/lib/types';
 import { DISPLAY_SOURCE, one } from './shared';
 
@@ -152,6 +152,164 @@ export async function getMyPicks(
     return new Map();
   }
   return new Map((data ?? []).map((r) => [r.fixture_id, r as MyPick]));
+}
+
+// ── settled picks (the reveal) ──────────────────────────────────────────────
+
+export interface SettledPickModel {
+  prob_home: number;
+  prob_draw: number;
+  prob_away: number;
+  brier_score: number | null;
+}
+
+export interface SettledPick {
+  /** user_predictions.id (uuid) — the localStorage "seen" key. */
+  id: string;
+  fixture_id: number;
+  kickoff_utc: string;
+  status: string;
+  home: string;
+  away: string;
+  final_home_goals: number;
+  final_away_goals: number;
+  prob_home: number;
+  prob_draw: number;
+  prob_away: number;
+  result: MatchResult;
+  brier_score: number;
+  scored_at: string;
+  /** The model's call for the SAME fixture — the SAME displayed source +
+   *  void-status exclusion the pool leaderboard's `beatModel` flag uses
+   *  (play/pools/[id]/page.tsx), so "beat the model" means one consistent
+   *  thing everywhere on the site. Null when the model has no scored call for
+   *  this fixture (not published yet, or a void prediction). */
+  model: SettledPickModel | null;
+}
+
+interface RawSettledPickFixture {
+  kickoff_utc: string;
+  status: string;
+  final_home_goals: number | null;
+  final_away_goals: number | null;
+  home_team: { name: string } | { name: string }[] | null;
+  away_team: { name: string } | { name: string }[] | null;
+  predictions:
+    | Array<{
+        source: string;
+        status: string;
+        prob_home: number;
+        prob_draw: number;
+        prob_away: number;
+        brier_score: number | null;
+      }>
+    | null;
+}
+
+interface RawSettledPick {
+  id: string;
+  fixture_id: number;
+  prob_home: number;
+  prob_draw: number;
+  prob_away: number;
+  result: string | null;
+  brier_score: number | null;
+  scored_at: string | null;
+  fixture: RawSettledPickFixture | RawSettledPickFixture[] | null;
+}
+
+function isMatchResult(v: string | null): v is MatchResult {
+  return v === 'home' || v === 'draw' || v === 'away';
+}
+
+/**
+ * The signed-in visitor's OWN settled "Beat the Model" picks — fixture
+ * finished, this pick scored (`scored_at` non-null) — newest-scored first.
+ * This is what feeds the reveal. No schema change: `result` is the actual
+ * outcome text ('home'/'draw'/'away') written by
+ * jobs/score_user_predictions.py, which derives it via the exact same
+ * jobs/scoring.py `result_from_goals` the model's own ledger uses.
+ *
+ * The explicit `.eq('user_id', …)` matters for the same reason it does in
+ * `getMyPicks`: RLS also surfaces pool-mates' picks once a fixture locks, and
+ * this list must only ever contain the viewer's own settled calls.
+ *
+ * Degrades to [] on any read failure, and silently skips any row missing a
+ * final score / result / brier (shouldn't happen — the scoring job writes
+ * all three together — but a malformed row must never crash this secondary
+ * surface, only the primary ledger read throws). The reveal then shows an
+ * honest empty state, never invented data.
+ */
+export async function getMySettledPicks(
+  supabase: Client,
+  userId: string,
+): Promise<SettledPick[]> {
+  const { data, error } = await supabase
+    .from('user_predictions')
+    .select(
+      `id, fixture_id, prob_home, prob_draw, prob_away, result, brier_score, scored_at,
+       fixture:fixtures!user_predictions_fixture_id_fkey(
+         kickoff_utc, status, final_home_goals, final_away_goals,
+         home_team:teams!fixtures_home_team_id_fkey(name),
+         away_team:teams!fixtures_away_team_id_fkey(name),
+         predictions(source, status, prob_home, prob_draw, prob_away, brier_score)
+       )`,
+    )
+    .eq('user_id', userId)
+    .not('scored_at', 'is', null)
+    .order('scored_at', { ascending: false })
+    .limit(100);
+
+  if (error) {
+    console.error('getMySettledPicks: read failed', error.message);
+    return [];
+  }
+
+  const out: SettledPick[] = [];
+  for (const raw of (data ?? []) as unknown as RawSettledPick[]) {
+    const fixture = one(raw.fixture);
+    if (
+      !fixture ||
+      fixture.final_home_goals === null ||
+      fixture.final_away_goals === null ||
+      raw.brier_score === null ||
+      raw.scored_at === null ||
+      !isMatchResult(raw.result)
+    ) {
+      continue;
+    }
+    const model =
+      (fixture.predictions ?? []).find(
+        (p) =>
+          p.source === DISPLAY_SOURCE &&
+          !VOID_STATUSES.includes(p.status as PredictionStatus),
+      ) ?? null;
+    out.push({
+      id: raw.id,
+      fixture_id: raw.fixture_id,
+      kickoff_utc: fixture.kickoff_utc,
+      status: fixture.status,
+      home: one(fixture.home_team)?.name ?? 'Home',
+      away: one(fixture.away_team)?.name ?? 'Away',
+      final_home_goals: fixture.final_home_goals,
+      final_away_goals: fixture.final_away_goals,
+      prob_home: raw.prob_home,
+      prob_draw: raw.prob_draw,
+      prob_away: raw.prob_away,
+      result: raw.result,
+      brier_score: raw.brier_score,
+      scored_at: raw.scored_at,
+      model: model
+        ? {
+            prob_home: model.prob_home,
+            prob_draw: model.prob_draw,
+            prob_away: model.prob_away,
+            brier_score: model.brier_score,
+          }
+        : null,
+    });
+  }
+  return out;
 }
 
 // ── pools ────────────────────────────────────────────────────────────────────

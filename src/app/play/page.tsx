@@ -3,9 +3,11 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import PlayExplainer from '@/components/play/PlayExplainer';
 import PickCard from '@/components/play/PickCard';
+import SettledPickReveal from '@/components/play/SettledPickReveal';
 import { ArrowRightIcon } from '@/components/icons';
 import {
   getMyPicks,
+  getMySettledPicks,
   getOpenPickFixtures,
   type MyPick,
 } from '@/lib/queries/play';
@@ -53,9 +55,10 @@ export default async function PlayPage() {
   if (!user) return <PlayExplainer />;
 
   const nowIso = new Date().toISOString();
-  const [fixtures, picks] = await Promise.all([
+  const [fixtures, picks, settled] = await Promise.all([
     getOpenPickFixtures(supabase, nowIso),
     getMyPicks(supabase, user.id),
+    getMySettledPicks(supabase, user.id),
   ]);
 
   // Group open fixtures by UTC day, in kickoff order.
@@ -121,6 +124,29 @@ export default async function PlayPage() {
           </section>
         ))
       )}
+
+      <section aria-labelledby="settled-heading">
+        <h2
+          id="settled-heading"
+          className="mb-3 font-display text-lg font-semibold tracking-tight text-fg"
+        >
+          Your results
+        </h2>
+        {settled.length === 0 ? (
+          <div className="glass px-4 py-5">
+            <p className="text-sm leading-relaxed text-fg-dim">
+              Your settled calls show up here once your matches finish — wins
+              and losses alike.
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {settled.map((pick) => (
+              <SettledPickReveal key={pick.id} pick={pick} />
+            ))}
+          </ul>
+        )}
+      </section>
 
       <p className="text-xs leading-relaxed text-fg-faint">
         Free and prize-free forever — no money, no prizes, no streaks. Picks

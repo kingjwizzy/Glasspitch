@@ -126,6 +126,27 @@ function buildRounds(pool: PoolDetail): Array<{
     }));
 }
 
+/** The viewer's own beat-the-model tally in THIS pool: how many of their
+ *  scored picks in the pool had a strictly sharper Brier than the model's for
+ *  the same fixture (kick plan #4/#5 — the same per-fixture comparison the
+ *  reveal on /play uses), out of how many had a model call to compare
+ *  against at all. Null when the viewer has no such comparable pick yet — an
+ *  honest "nothing to headline" rather than a false 0-of-0. */
+function buildMyBeatModelTally(
+  pool: PoolDetail,
+  userId: string,
+): { won: number; total: number } | null {
+  const pairs = pool.picks
+    .filter((p) => p.user_id === userId && p.brier_score !== null)
+    .map((p) => ({
+      mine: p.brier_score as number,
+      model: pool.fixtures.get(p.fixture_id)?.model?.brier_score ?? null,
+    }))
+    .filter((x): x is { mine: number; model: number } => x.model !== null);
+  if (pairs.length === 0) return null;
+  return { won: pairs.filter((x) => x.mine < x.model).length, total: pairs.length };
+}
+
 /** Locked fixtures (kickoff passed) that have at least one visible pick,
  *  newest first. */
 function buildLockedFixtures(pool: PoolDetail, nowIso: string): PoolFixtureView[] {
@@ -164,6 +185,7 @@ export default async function PoolPage({ params }: PoolPageProps) {
   const nameByUser = new Map(pool.members.map((m) => [m.user_id, m.display_name]));
   const inviteUrl = `${SITE_URL}/play/join/${pool.invite_code}`;
   const anyScored = leaderboard.some((r) => r.scored > 0);
+  const myTally = buildMyBeatModelTally(pool, user.id);
 
   return (
     <article className="mx-auto max-w-xl space-y-8">
@@ -182,6 +204,21 @@ export default async function PoolPage({ params }: PoolPageProps) {
           prize-free, scored on Brier — lower&nbsp;=&nbsp;sharper.
         </p>
       </header>
+
+      {/* Headline stat (kick plan #4/#5) — the same beat-the-model comparison
+          the per-pick reveal on /play uses, promoted up front instead of
+          buried in the "Model, same picks" table column below. Misses count
+          too: a 1-of-6 tally is shown exactly as plainly as a 5-of-6. */}
+      {myTally && (
+        <div className="glass px-4 py-4">
+          <p className="text-sm leading-relaxed text-fg-dim">
+            You&rsquo;ve beaten the model on{' '}
+            <span className="font-mono font-medium text-fg">{myTally.won}</span> of{' '}
+            <span className="font-mono font-medium text-fg">{myTally.total}</span>{' '}
+            scored call{myTally.total === 1 ? '' : 's'} in this pool.
+          </p>
+        </div>
+      )}
 
       <section aria-labelledby="invite-heading" className="glass px-4 py-4">
         <h2

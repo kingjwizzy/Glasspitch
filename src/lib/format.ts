@@ -324,3 +324,99 @@ export function receiptRead(pickProb: number, hit: boolean): string {
     ? `A ${p} call missed — even strong calls lose sometimes, and we count it.`
     : `A ${p} call lost — that should happen more often than not.`;
 }
+
+// ── Beat the Model — the reveal (kick plan #5) ──────────────────────────────
+
+export type BrierVerdictTier = 'bang-on' | 'sharp' | 'close' | 'off';
+
+export interface BrierVerdict {
+  tier: BrierVerdictTier;
+  /** Short chip label. */
+  label: string;
+  /** One-line, kind, instructive elaboration. Never "try again" or any
+   *  urgency vocabulary (DESIGN.md §6) — a miss is a lesson, not a failure. */
+  detail: string;
+}
+
+/**
+ * Plain-language translation of a three-way H/D/A Brier score into a kind,
+ * instructive verdict. Same 0 (perfect) .. 2 (confidently wrong) scale
+ * printed everywhere else (ScoredResult.tsx's "0 best, 2 worst" caption, the
+ * pool leaderboard) — never a second, bespoke scale.
+ *
+ * The three cut points are grounded in the score's own geometry, not chosen
+ * by eye:
+ *  - The algebraic minimum Brier for ANY miss (the pick that would have been
+ *    argmax'd from the saved probabilities doesn't match what happened) is
+ *    exactly 0.5 — reached only in the limit of two outcomes tied at 50/50
+ *    and the third at 0. So a Brier below 0.5 is ALWAYS a hit.
+ *  - The maximum possible Brier for ANY hit is exactly 2/3 (≈0.667) — reached
+ *    only at a perfectly even 33/33/33 split (the same "always guessing"
+ *    baseline RecordBand.tsx plots on the home page). So a Brier at or above
+ *    1.0 is ALWAYS a miss.
+ *  - 0.5–1.0 is therefore the only band where hits and misses overlap: a hit
+ *    called with little conviction, or a miss that still gave the truth real
+ *    weight. It reads as "close" either way — a narrow call is a narrow call,
+ *    regardless of which side of it landed.
+ *
+ * | Tier    | Range     | Always... |
+ * |---------|-----------|------------|
+ * | Bang on | < 0.20    | a confident hit |
+ * | Sharp   | 0.20–0.50 | a hit, leaning the right way |
+ * | Close   | 0.50–1.00 | ambiguous — a narrow hit or a narrow miss |
+ * | Off     | ≥ 1.00    | a miss the model (or you) read differently |
+ */
+export function brierVerdict(brier: number): BrierVerdict {
+  if (brier < 0.2) {
+    return {
+      tier: 'bang-on',
+      label: 'Bang on',
+      detail: 'Nailed it, and said so with real conviction.',
+    };
+  }
+  if (brier < 0.5) {
+    return {
+      tier: 'sharp',
+      label: 'Sharp',
+      detail: 'You leaned the right way, and it paid off.',
+    };
+  }
+  if (brier < 1.0) {
+    return {
+      tier: 'close',
+      label: 'Close',
+      detail: 'This one could have gone either way — a narrow call.',
+    };
+  }
+  return {
+    tier: 'off',
+    label: 'Off',
+    detail: 'The model read this one differently — a lesson for next time, not a verdict on you.',
+  };
+}
+
+/**
+ * The honest one-line "I beat the model" read (kick plan #4) — ONLY ever
+ * called when the visitor's own Brier is strictly lower than the model's for
+ * the SAME fixture (a real, scored result — never a hypothetical). Prefers
+ * the concrete, literal claim ("you gave X more credit than the model did")
+ * when it's true; otherwise falls back to a claim that's always true by
+ * construction (a lower Brier means the visitor's whole three-way spread was
+ * closer to the true one-hot outcome than the model's was, even if no single
+ * leg was individually higher).
+ */
+export function beatModelRead(
+  userProbs: Probs,
+  modelProbs: Probs,
+  result: MatchResult,
+  home: string,
+  away: string,
+): string {
+  const name = outcomeName(result, home, away);
+  const yours = probOf(userProbs, result);
+  const models = probOf(modelProbs, result);
+  if (yours > models) {
+    return `You gave ${name} more credit than the model did (${pct(yours)} vs ${pct(models)}) — and you were right.`;
+  }
+  return `Your whole spread matched what happened more closely than the model's did — that's the win here, not any one number.`;
+}
