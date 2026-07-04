@@ -21,9 +21,10 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `util.py` | `slugify`, UTC datetime helpers. |
 | `scoring.py` | Multiclass Brier score + clipped log loss (§10). |
 | `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9); v3 W5 adds `expected_goals`/`clean_sheet_probability`/`team_snapshot_metrics` (Poisson clean-sheet + continuous expected-goals estimates for `snapshot_probabilities.py`). `ratings_from_results` takes an optional `initial_ratings` map so a replay can start teams from a pre-tournament prior instead of a shared cold-start default (see `seed_ratings.py`). |
+| `narrative.py` | **New (migration 0009, improvement #6).** `build_free_narrative()` — a pure, deterministic, template-based ≤2-sentence "what's driving this call" summary from H/D/A probabilities + the SAME curated `comparison`/`h2h_summary` signals already stored in `fixture_insights(kind='prediction_detail')`. No API call, no LLM/free-text generation. Shared by `fetch_predictions.py` (going forward) and `backfill_narratives.py` (existing rows). |
 | `seed_ratings.py` | **v3 W7 hardening.** Static, in-repo (NOT API-fetched) pre-tournament Elo priors per team, keyed by the stable API-Football `api_team_id`. Fixes a diagnosed bug where every team cold-started at the same Elo default, so 2-3 replayed group games couldn't tell an elite side from a mid-table host — used ONLY to seed `simulate_chances.py`'s own replay, never the publicly displayed prediction (§9). |
 | `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). Also normalises + stores each fixture's `round`/`api_round` and its `winner_team_id` (migration 0007) — see below. |
-| `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. |
+| `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. Also derives + stores the free `predictions.narrative` (improvement #6, migration 0009) from that SAME response, for the api-football row only. |
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
 | `score_results.py` | **Frequent around match end.** Scores the self-draining `locked` set via `scoring.py` (§8.4, §10). |
 | `fetch_insights.py` | **v2, new (suggested cadence: every 30–60 min).** One `/fixtures/statistics` fetch per finished+scored fixture without a `post_match_stats` insight yet (most-recently-finished first); curates xG/shots/possession/cards/passes per side into `fixture_insights` (migration 0004). Premium depth content — never the free ledger. |
@@ -32,6 +33,8 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `snapshot_probabilities.py` | **v3 W5, new (nightly, e.g. 05:45 UTC).** DB-only, no API call. Per-team Elo-derived win/draw/loss, clean-sheet, and expected-goals snapshots for upcoming fixtures + day-over-day deltas, into `team_probability_snapshots` (migration 0006). **Public** data — powers the free Gameweek Board / Fixture Ticker, same access class as `top_scorers`. |
 | `simulate_chances.py` | **v3 W7, new ("World Cup Chances", 06:30 + 22:15 UTC).** DB-only, no API call. Monte Carlo simulation (`config.MONTE_CARLO_SIMS`, default 10,000) of the remaining knockout bracket (`config.KNOCKOUT_ROUND_ORDER`), writing one `tournament_chances` row per surviving team per day (migration 0007, ROADMAP.md §4 item 7). **Public** data, same access class as `top_scorers`. Prices every not-yet-decided match from its own `seed_ratings.py`-seeded Elo only — deliberately does NOT consult a fixture's stored third-party prediction (see the module docstring's "Why Elo, seeded" for the diagnosed host-nation-outranks-elites bug this fixes). |
 | `ledger_integrity.py` | **v3, new ("Ledger integrity ops", nightly 03:30 UTC).** DB + Supabase Storage only, no API call. Nightly private full-table backup export (bucket `config.LEDGER_BACKUPS_BUCKET`, get-or-create + verified non-public every run) + a publicly-verifiable SHA-256 hash chain over the scored ledger, upserted into `ledger_checkpoints` (migration 0007, ROADMAP.md §4 item 5). |
+| `compute_leaderboard.py` | **New (improvement #5, suggested cadence: every ~20–30 min alongside `score_user_predictions.py`).** DB-only, no API call. For every opted-in (`profiles.leaderboard_opt_in=true`) user with ≥1 scored "Beat the Model" pick: mean Brier (user) vs mean Brier (model, same fixtures) → `beat_margin`, ranked desc. Idempotent full-replace into `leaderboard_standings` (migration 0009). **Public** data — anon-readable, contains ONLY opted-in users' display name + record. |
+| `backfill_narratives.py` | **One-off (migration 0009, improvement #6) — not in `scheduler.yml`.** DB-only, no API call. Derives `predictions.narrative` for EXISTING `api-football` rows purely from already-stored data (fixtures/teams + `fixture_insights`). Idempotent/self-draining (`narrative IS NULL`); run manually once, safe to re-run. |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
 
@@ -178,6 +181,24 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   public, anon-readable verifiability artifact a third party can use to
   confirm the ledger was never rewritten, reproducible from `public.predictions`
   alone (see the module docstring's exact canonicalisation rule).
+- **`compute_leaderboard`** (improvement #5, migration 0009) — DB-only, no API
+  call. For every `profiles` row with `leaderboard_opt_in=true` and ≥1 scored
+  `user_predictions` pick: pulls the model's own SCORED `api-football` Brier
+  score for the SAME set of fixtures the user has scored picks on (excluding
+  any fixture the model hasn't scored yet — nothing to compare against, not a
+  filter on the user's own result), computes `beat_margin = model_mean_brier
+  - user_mean_brier`, and ranks desc. REPLACES `leaderboard_standings` wholesale
+  every run (upsert-then-prune, mirrors `fetch_topscorers.py`'s
+  `replace_top_scorers`). A user with no `leaderboard_display_name` set gets an
+  anonymised `"Player <uuid prefix>"` label — never an email or other PII.
+- **`backfill_narratives`** (improvement #6, migration 0009, **one-off — not
+  in `scheduler.yml`**) — DB-only, no API call. For every existing
+  `source='api-football'` prediction with `narrative IS NULL`: joins its
+  fixture's team names plus its stored `fixture_insights(kind='prediction_detail')`
+  payload (if any) and derives the SAME `jobs.narrative.build_free_narrative()`
+  summary `fetch_predictions.py` now writes inline for new rows. Self-draining
+  (`narrative IS NULL`) — safe to run manually more than once; nothing to do on
+  a re-run once every row is caught up.
 
 ## `--dry-run`
 
@@ -222,6 +243,8 @@ python -m jobs.score_user_predictions --dry-run   # DB-only — no API call eith
 python -m jobs.snapshot_probabilities --dry-run    # DB-only — no API call either way
 python -m jobs.simulate_chances --dry-run          # DB-only — no API call either way
 python -m jobs.ledger_integrity --dry-run          # DB + Storage only — no API call either way (dry-run skips both writes)
+python -m jobs.compute_leaderboard --dry-run       # DB-only — no API call either way
+python -m jobs.backfill_narratives --dry-run       # DB-only — no API call either way; one-off, safe to re-run
 
 # for real (writes to the DB)
 python -m jobs.fetch_fixtures        # daily
@@ -234,6 +257,8 @@ python -m jobs.score_user_predictions # v3 W5 — every ~20 min (scheduler.yml)
 python -m jobs.snapshot_probabilities # v3 W5 — nightly (scheduler.yml: 05:45 UTC)
 python -m jobs.simulate_chances       # v3 W7 — twice daily (scheduler.yml: 06:30 + 22:15 UTC)
 python -m jobs.ledger_integrity       # v3 — nightly (scheduler.yml: 03:30 UTC)
+python -m jobs.compute_leaderboard    # new — suggested every ~20-30 min (not yet in scheduler.yml)
+python -m jobs.backfill_narratives    # one-off — run manually once, then not needed again
 ```
 
 Add `-v` for debug logging. Writes are idempotent (keyed on the `api_*` ids), so
@@ -252,10 +277,11 @@ requests and a per-run guard (`MAX_REQUESTS_PER_RUN`, default 100) refuses to
 exceed the budget within a single run; the daily total stays low by the
 fetch-once design, not by cross-run accounting. Each job's summary logs
 `api_requests` so you can see how much budget a run (including `--dry-run`) spent.
-The website never calls the API. `simulate_chances.py` and `ledger_integrity.py`
-are DB-only (the latter also writes to Supabase Storage) — neither ever
-touches the football API, so neither ever spends any of the 100/day budget,
-however often they run.
+The website never calls the API. `simulate_chances.py`, `ledger_integrity.py`,
+`compute_leaderboard.py`, and `backfill_narratives.py` are all DB-only
+(`ledger_integrity.py` also writes to Supabase Storage) — none of them ever
+touches the football API, so none ever spends any of the 100/day budget,
+however often (or, for the one-off backfill, however rarely) they run.
 
 Switching to the **RapidAPI** distribution later is a one-line change in
 `config.py` (`API_FOOTBALL_BASE_URL`, `API_FOOTBALL_AUTH_HEADER`, and the

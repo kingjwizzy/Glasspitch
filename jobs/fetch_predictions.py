@@ -22,6 +22,15 @@ call -- is stored as a `fixture_insights` row (kind='prediction_detail') in
 the SAME run, only when a NEW api-football prediction was just inserted (a
 fixture already skipped as `have_api` was handled -- insight and all -- the
 run it was first fetched, so this never re-fetches or re-derives anything).
+
+Free "what's driving this call" narrative (improvement #6, migration 0009):
+from that SAME curated comparison/h2h_summary (plus this row's own H/D/A
+probabilities and the response's own team names), a short, deterministic,
+plain-language ``predictions.narrative`` is derived via
+``jobs.narrative.build_free_narrative`` and stored alongside the freshly-
+inserted api-football row -- again never a second API call, and never for
+the (never-displayed) elo-v1 row. Existing rows written before this landed
+are caught up by the one-off jobs/backfill_narratives.py.
 """
 
 from __future__ import annotations
@@ -34,6 +43,7 @@ from jobs import config, elo, util
 from jobs.apiclient import ApiFootballClient, ApiFootballError, RequestBudgetExceeded
 from jobs.cli import main
 from jobs.db import SupabaseStore
+from jobs.narrative import build_free_narrative
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +168,23 @@ def _summarise_h2h(h2h: list, limit: int = 5) -> Optional[dict]:
     return {"recent_meetings": recent, "sample_size": len(h2h)}
 
 
+def _team_names_from_payload(payload: dict) -> tuple[str, str]:
+    """Plain-text team names from the SAME /predictions response already
+    fetched for this fixture (never a new call) -- API-Football's own
+    ``response[0].teams.{home,away}.name``. Falls back to 'Home'/'Away' if
+    absent (shouldn't happen for a real fixture, but this only feeds the
+    free narrative -- a convenience field, never load-bearing for the
+    ledger itself).
+    """
+    response = (payload or {}).get("response") or []
+    if not response:
+        return ("Home", "Away")
+    teams = (response[0] or {}).get("teams") or {}
+    home_name = (teams.get("home") or {}).get("name") or "Home"
+    away_name = (teams.get("away") or {}).get("name") or "Away"
+    return (home_name, away_name)
+
+
 def build_prediction_detail_payload(payload: dict) -> Optional[dict]:
     """Curate a compact, storable subset of an API-Football /predictions
     response for a ``fixture_insights`` row (``kind='prediction_detail'``,
@@ -210,6 +237,7 @@ def build_prediction_row(
     scoreline: tuple[int, int],
     kickoff_utc: str,
     now_iso: str,
+    narrative: Optional[str] = None,
 ) -> dict:
     prob_home, prob_draw, prob_away = probabilities
     home_goals, away_goals = scoreline
@@ -225,6 +253,10 @@ def build_prediction_row(
         "published_at": now_iso,
         "locked_at": kickoff_utc,  # = kickoff (§7)
         "status": "published",
+        # Free "what's driving this call" narrative (migration 0009,
+        # improvement #6) -- None for the elo-v1 pass below (never
+        # displayed, §9), populated for the api-football pass in run().
+        "narrative": narrative,
     }
 
 
@@ -318,6 +350,26 @@ def run(
             )
             continue
 
+        # Curated depth-content payload from this SAME /predictions response
+        # (never a second fetch) -- premium's fixture_insights row, written
+        # alongside the free ledger row (§4/§7).
+        insight_payload = build_prediction_detail_payload(payload)
+
+        # Free "what's driving this call" narrative (improvement #6,
+        # migration 0009) -- derived from the SAME response's team names plus
+        # this SAME insight payload's comparison/h2h_summary, never a second
+        # fetch. Stored on the api-football row only (never elo-v1, §9).
+        home_name, away_name = _team_names_from_payload(payload)
+        narrative = build_free_narrative(
+            home_name=home_name,
+            away_name=away_name,
+            prob_home=parsed.prob_home,
+            prob_draw=parsed.prob_draw,
+            prob_away=parsed.prob_away,
+            comparison=(insight_payload or {}).get("comparison"),
+            h2h_summary=(insight_payload or {}).get("h2h_summary"),
+        )
+
         row = build_prediction_row(
             fixture_id=fixture_id,
             source=config.THIRD_PARTY_SOURCE,
@@ -326,18 +378,15 @@ def run(
             scoreline=parsed.scoreline,
             kickoff_utc=fixture["kickoff_utc"],
             now_iso=_stamp(),
+            narrative=narrative,
         )
-        # Curated depth-content payload from this SAME /predictions response
-        # (never a second fetch) -- premium's fixture_insights row, written
-        # alongside the free ledger row (§4/§7).
-        insight_payload = build_prediction_detail_payload(payload)
 
         if dry_run:
             log.info(
                 "[dry-run] would insert api-football prediction for fixture "
-                "%s: H/D/A=%.3f/%.3f/%.3f score=%s advice=%r",
+                "%s: H/D/A=%.3f/%.3f/%.3f score=%s advice=%r narrative=%r",
                 fixture_id, parsed.prob_home, parsed.prob_draw, parsed.prob_away,
-                parsed.scoreline, parsed.advice,
+                parsed.scoreline, parsed.advice, narrative,
             )
             if insight_payload is not None:
                 log.info(

@@ -3,15 +3,6 @@
 //   supabase gen types typescript --project-id vrcnbvijanpxrqwndnyl > src/lib/database.types.ts
 // The hand-written domain types in ./types.ts remain the canonical contract the
 // UI codes against; this file is the raw row/insert/update shapes for the client.
-//
-// REGENERATED (2026-07-04, W6): migration 0007_chances_and_email.sql is now
-// applied to the live DB, so the whole file below is once again the
-// generator's plain output — `email_subscribers`, `ledger_checkpoints`,
-// `tournament_chances`, and `fixtures.round` / `fixtures.api_round` /
-// `fixtures.winner_team_id` are all generated, not hand-written (the prior
-// 2026-07-03 hand-extension is gone; regenerate wholesale after any future
-// migration rather than hand-patching this file again).
-
 export type Json =
   | string
   | number
@@ -28,6 +19,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      email_send_log: {
+        Row: {
+          email: string
+          id: number
+          ip_hash: string
+          sent_at: string
+        }
+        Insert: {
+          email: string
+          id?: never
+          ip_hash: string
+          sent_at?: string
+        }
+        Update: {
+          email?: string
+          id?: never
+          ip_hash?: string
+          sent_at?: string
+        }
+        Relationships: []
+      }
       email_subscribers: {
         Row: {
           confirm_token: string
@@ -238,6 +250,47 @@ export type Database = {
         }
         Relationships: []
       }
+      leaderboard_standings: {
+        Row: {
+          beat_margin: number
+          display_name: string
+          model_mean_brier: number
+          picks_scored: number
+          rank: number
+          updated_at: string
+          user_id: string
+          user_mean_brier: number
+        }
+        Insert: {
+          beat_margin: number
+          display_name: string
+          model_mean_brier: number
+          picks_scored: number
+          rank: number
+          updated_at?: string
+          user_id: string
+          user_mean_brier: number
+        }
+        Update: {
+          beat_margin?: number
+          display_name?: string
+          model_mean_brier?: number
+          picks_scored?: number
+          rank?: number
+          updated_at?: string
+          user_id?: string
+          user_mean_brier?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leaderboard_standings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leagues: {
         Row: {
           api_league_id: number
@@ -371,6 +424,7 @@ export type Database = {
           locked_at: string
           log_loss: number | null
           model_version: string
+          narrative: string | null
           predicted_away_goals: number
           predicted_home_goals: number
           prob_away: number
@@ -393,6 +447,7 @@ export type Database = {
           locked_at: string
           log_loss?: number | null
           model_version: string
+          narrative?: string | null
           predicted_away_goals: number
           predicted_home_goals: number
           prob_away: number
@@ -415,6 +470,7 @@ export type Database = {
           locked_at?: string
           log_loss?: number | null
           model_version?: string
+          narrative?: string | null
           predicted_away_goals?: number
           predicted_home_goals?: number
           prob_away?: number
@@ -442,18 +498,24 @@ export type Database = {
           created_at: string
           id: string
           is_18_plus: boolean
+          leaderboard_display_name: string | null
+          leaderboard_opt_in: boolean
           marketing_opt_in: boolean
         }
         Insert: {
           created_at?: string
           id: string
           is_18_plus?: boolean
+          leaderboard_display_name?: string | null
+          leaderboard_opt_in?: boolean
           marketing_opt_in?: boolean
         }
         Update: {
           created_at?: string
           id?: string
           is_18_plus?: boolean
+          leaderboard_display_name?: string | null
+          leaderboard_opt_in?: boolean
           marketing_opt_in?: boolean
         }
         Relationships: []
@@ -790,6 +852,10 @@ export type Database = {
         Args: { p_display_name: string; p_invite_code: string }
         Returns: Json
       }
+      request_email_send: {
+        Args: { p_email: string; p_ip_hash: string }
+        Returns: boolean
+      }
       teardown_season: { Args: { p_season: number }; Returns: Json }
     }
     Enums: {
@@ -917,9 +983,3 @@ export type CompositeTypes<
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
-
-export const Constants = {
-  public: {
-    Enums: {},
-  },
-} as const

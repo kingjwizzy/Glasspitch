@@ -367,6 +367,141 @@ class SupabaseStore:
         )
         return {row["fixture_id"] for row in rows}
 
+    # ----- free narrative backfill (migration 0009, improvement #6) ----------
+    # jobs/backfill_narratives.py's self-draining candidate set + writer --
+    # jobs/fetch_predictions.py itself never needs these (it derives + stores
+    # the narrative inline, in the SAME insert, for every NEWLY-fetched
+    # api-football row -- see that module).
+    def predictions_missing_narrative(self, *, source: str) -> list[dict]:
+        """``source`` predictions with ``narrative IS NULL`` yet, each
+        carrying its fixture's team names embedded (same FK-disambiguated
+        convention as src/lib/queries/match.ts) -- the one-off backfill's
+        self-draining candidate set. DB-only, no football-API call.
+        """
+        return self._paginated(
+            lambda: self._client.table("predictions")
+            .select(
+                "id, fixture_id, prob_home, prob_draw, prob_away, "
+                "fixture:fixtures("
+                "home_team:teams!fixtures_home_team_id_fkey(name), "
+                "away_team:teams!fixtures_away_team_id_fkey(name))"
+            )
+            .eq("source", source)
+            .is_("narrative", "null")
+        )
+
+    def insight_payloads_for_fixtures(
+        self, fixture_ids: list[int], *, kind: str
+    ) -> dict[int, dict]:
+        """``fixture_id -> payload`` for every EXISTING ``fixture_insights``
+        row of ``kind`` among ``fixture_ids`` -- jobs/backfill_narratives.py's
+        source of the SAME comparison/h2h_summary signals
+        jobs/fetch_predictions.py derives a narrative from inline, purely
+        from what is already stored (zero API calls)."""
+        if not fixture_ids:
+            return {}
+        rows = self._paginated(
+            lambda: self._client.table("fixture_insights")
+            .select("fixture_id, payload")
+            .eq("kind", kind)
+            .in_("fixture_id", fixture_ids)
+        )
+        return {row["fixture_id"]: row["payload"] for row in rows}
+
+    def write_prediction_narrative(self, prediction_id: str, *, narrative: str) -> None:
+        """Narrative-only UPDATE -- safe post-lock/post-score: ``narrative``
+        is deliberately NOT one of the columns the §7 immutability trigger
+        protects (mirrors ``tier``'s deliberate mutability, migration
+        0009's comment on the column), so the one-off backfill
+        (jobs/backfill_narratives.py) can populate it for already-locked/
+        scored ledger rows without touching any protected field.
+        """
+        self._client.table("predictions").update({"narrative": narrative}).eq(
+            "id", prediction_id
+        ).execute()
+
+    # ----- public opt-in "Beat the Model" leaderboard (migration 0009,
+    # improvement #5) -- jobs/compute_leaderboard.py. Football tables/the
+    # model's ledger stay jobs-only; this reads profiles/user_predictions
+    # (both already game-writer-scoped tables, ARCHITECTURE.md v3 §5) and
+    # writes only the new, PUBLIC leaderboard_standings table.
+    def opted_in_leaderboard_users(self) -> list[dict]:
+        """``profiles`` rows with ``leaderboard_opt_in=true`` -- the
+        candidate set. Returns ``id`` + ``leaderboard_display_name`` (may be
+        null -- the job falls back to an anonymised placeholder rather than
+        ever using an email or other PII, since none is fetched here).
+        """
+        return self._paginated(
+            lambda: self._client.table("profiles")
+            .select("id, leaderboard_display_name")
+            .eq("leaderboard_opt_in", True)
+        )
+
+    def scored_user_predictions_for_users(self, user_ids: list[str]) -> list[dict]:
+        """Every SCORED ``user_predictions`` row (``user_id``,
+        ``fixture_id``, ``brier_score``) for the given user ids --
+        jobs/compute_leaderboard.py's per-user pick pool. Misses count
+        honestly: EVERY scored pick is returned here, good or bad -- nothing
+        is filtered for a flattering average.
+        """
+        if not user_ids:
+            return []
+        return self._paginated(
+            lambda: self._client.table("user_predictions")
+            .select("user_id, fixture_id, brier_score")
+            .in_("user_id", user_ids)
+            .not_.is_("scored_at", "null")
+        )
+
+    def scored_model_brier_for_fixtures(
+        self, fixture_ids: list[int], *, source: str
+    ) -> dict[int, float]:
+        """``fixture_id -> the model's SCORED brier_score`` for ``source``,
+        for the given fixtures -- jobs/compute_leaderboard.py compares a
+        user's picks against the model on the SAME fixtures, mirroring
+        src/lib/queries/play.ts'/match.ts' ``DISPLAY_SOURCE`` + void-exclusion
+        rule: filtering on ``status='scored'`` already excludes every void
+        status (``unlocked_void``/``void_cancelled``) by construction -- a
+        voided prediction can never reach ``scored`` (see lock_predictions.py
+        / score_results.py).
+        """
+        if not fixture_ids:
+            return {}
+        rows = self._paginated(
+            lambda: self._client.table("predictions")
+            .select("fixture_id, brier_score")
+            .eq("source", source)
+            .eq("status", "scored")
+            .in_("fixture_id", fixture_ids)
+        )
+        return {row["fixture_id"]: row["brier_score"] for row in rows}
+
+    def replace_leaderboard_standings(self, rows: list[dict]) -> dict:
+        """Idempotent upsert-then-prune of the WHOLE ``leaderboard_standings``
+        table -- mirrors ``replace_top_scorers``' convention (never
+        observably empty mid-run). ``rows`` is the FULL, freshly-recomputed,
+        already-ranked standings set for this run; any EXISTING row whose
+        ``user_id`` is not in that set (opted out, or no longer has a
+        comparable scored pick) is pruned.
+        """
+        keep_ids = {row["user_id"] for row in rows}
+        if rows:
+            self._client.table("leaderboard_standings").upsert(
+                rows, on_conflict="user_id"
+            ).execute()
+
+        existing = (
+            self._client.table("leaderboard_standings").select("user_id").execute().data
+        )
+        stale_ids = [r["user_id"] for r in existing if r["user_id"] not in keep_ids]
+        pruned = 0
+        if stale_ids:
+            self._client.table("leaderboard_standings").delete().in_(
+                "user_id", stale_ids
+            ).execute()
+            pruned = len(stale_ids)
+        return {"upserted": len(rows), "pruned": pruned}
+
     # ----- v2 premium: fixture_insights (ARCHITECTURE.md v2 §4/§7) -----------
     def existing_insight_fixture_ids(self, kind: str) -> set[int]:
         """Fixture ids that already have a ``fixture_insights`` row of
