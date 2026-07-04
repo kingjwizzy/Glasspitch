@@ -241,7 +241,9 @@ export default function PickCard({
               </span>
             </div>
           ))}
-          <p className="text-xs text-fg-faint">
+          {/* fg-dim, not fg-faint (a11y audit fix): instructional slider copy,
+              not an incidental hint — fg-faint fails WCAG AA below 18px. */}
+          <p className="text-xs text-fg-dim">
             Move one and the other two rebalance — the three always total 100%.
           </p>
         </div>

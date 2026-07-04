@@ -1,9 +1,21 @@
 import type { NextConfig } from "next";
 
-// Security headers (ARCHITECTURE.md §12). Low blast-radius today — the site
-// has zero client components, no cookies and no auth — but W2 adds Stripe
-// Checkout/Elements and an auth cookie, so a hardened baseline ships now
-// rather than being retrofitted under time pressure later.
+// Security headers (ARCHITECTURE.md §12; hardened further, security audit
+// finding #5). Applied via next.config's `headers()` rather than
+// src/middleware.ts: the CSP must cover EVERY route (every public ISR/SSG
+// page included), whereas middleware here is deliberately scoped (see its own
+// `config.matcher`) to only the auth/billing/game paths — broadening it to
+// match everything would re-run session-cookie logic on every cached page for
+// no reason. A static, build-time header list has no such cost.
+//
+// Threat model note this policy leans on (audit finding #6): @supabase/ssr's
+// session cookie is deliberately NOT httpOnly (createBrowserClient — see
+// src/lib/supabase/browser.ts / useAuthState.ts — reads the session straight
+// from the cookie client-side, which requires JS access to it). That means an
+// XSS bug, not just a network attacker, could exfiltrate a visitor's session —
+// so `script-src` staying as tight as possible (not a wildcard, no
+// 'unsafe-eval') is this policy's single most load-bearing line, not a
+// formality.
 //
 // `style-src 'unsafe-inline'` is required, not incidental: ProbabilityBar
 // (src/components/ProbabilityBar.tsx) renders segment widths via an inline
@@ -22,18 +34,49 @@ import type { NextConfig } from "next";
 // architecture every page relies on. Revisit with nonces scoped to dynamic
 // authenticated segments when W2 adds them. (JSON-LD data blocks were never
 // the issue: `type="application/ld+json"` is non-executable and ungoverned
-// by script directives.)
+// by script directives.) `'unsafe-eval'` is deliberately absent — nothing in
+// this app needs it.
+//
+// The OG/icon routes (icon.tsx, apple-icon.tsx, opengraph-image.tsx,
+// src/lib/og.ts) render `<img src="data:...">` tags, but only INSIDE Satori's
+// server-side ImageResponse renderer — that markup is turned into a PNG on
+// the server and never reaches a browser DOM, so it is entirely outside the
+// browser-enforced CSP below; nothing needs to be relaxed for it.
+//
+// `connect-src` includes the live Supabase project origin (not just 'self'):
+// useAuthState.ts's client-side `supabase.auth.getSession()` /
+// `onAuthStateChange` — the header's sign-in/account probe, present on every
+// page — talks to Supabase Auth directly from the browser, so without this
+// the header's auth state would silently fail to resolve on every route.
+//
+// `form-action` allow-lists Stripe's OWN hosted-checkout/portal domains, not
+// just 'self': /premium and /checkout/resume each POST to a same-origin
+// Route Handler that responds with a 303 redirect to a `checkout.stripe.com`
+// / `billing.stripe.com` URL (never an iframe — see the Stripe route
+// comments), and Chromium-based browsers enforce `form-action` against the
+// FINAL redirect destination, not just the form's own `action=`.
+function supabaseOrigin(): string | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null; // malformed/missing at build time — omit rather than crash the build.
+  }
+}
+
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://js.stripe.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
-  "connect-src 'self' https://api.stripe.com",
+  ["connect-src 'self' https://api.stripe.com", supabaseOrigin()].filter(Boolean).join(' '),
   "frame-src https://js.stripe.com https://hooks.stripe.com",
+  "form-action 'self' https://checkout.stripe.com https://billing.stripe.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  "object-src 'none'",
 ].join('; ');
 
 const nextConfig: NextConfig = {

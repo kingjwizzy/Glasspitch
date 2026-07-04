@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe/client';
+import { isCrossOriginRequest } from '@/lib/security/originGuard';
 import { SITE_URL } from '@/lib/constants';
 
 // POST /api/stripe/portal — opens the Stripe Customer Portal so cancelling is
@@ -8,9 +9,17 @@ import { SITE_URL } from '@/lib/constants';
 // visitor with an existing Stripe customer id (only ever written by the
 // webhook). Degrades to 503/redirect (never a crash) when Stripe isn't
 // configured or there is nothing to manage yet.
+//
+// Guarded by isCrossOriginRequest (security audit finding #4/CSRF fix): this
+// is a plain <form method="POST"> on /account — Route Handlers get no
+// automatic Origin check from Next.js the way Server Actions do.
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
+  if (isCrossOriginRequest(request)) {
+    return NextResponse.json({ error: 'Cross-origin request rejected.' }, { status: 403 });
+  }
+
   const stripe = getStripe();
   if (!stripe) {
     console.error('stripe/portal: Stripe is not configured.');

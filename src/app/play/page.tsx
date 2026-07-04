@@ -148,7 +148,10 @@ export default async function PlayPage() {
         )}
       </section>
 
-      <p className="text-xs leading-relaxed text-fg-faint">
+      {/* fg-dim, not fg-faint (a11y audit fix): a policy statement a visitor
+          needs to read before saving a pick, not an incidental hint —
+          fg-faint fails WCAG AA below 18px. */}
+      <p className="text-xs leading-relaxed text-fg-dim">
         Free and prize-free forever — no money, no prizes, no streaks. Picks
         can&rsquo;t be deleted once saved (misses stay on the record, exactly
         like ours), but you can adjust them any time before kickoff.

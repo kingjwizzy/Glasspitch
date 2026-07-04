@@ -30,8 +30,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   // Resume-to-Stripe (audit #21): a visitor arrives here mid-checkout when
   // /api/stripe/checkout redirected them to sign in first — say so plainly,
   // rather than a generic "Sign in" that makes it look like they lost their
-  // place.
-  const isCheckoutResume = safeNext.startsWith('/api/stripe/checkout');
+  // place. Checks /checkout/resume (not /api/stripe/checkout — that route is
+  // POST-only since the CSRF fix, so it's no longer a redirect target).
+  const isCheckoutResume = safeNext.startsWith('/checkout/resume');
 
   // "Currently a test-mode preview" is an internal-status disclosure that
   // must never linger once premium is actually live (same env gate as the

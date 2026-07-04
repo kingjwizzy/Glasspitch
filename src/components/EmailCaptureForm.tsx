@@ -62,7 +62,10 @@ export default function EmailCaptureForm() {
           Subscribe
         </button>
       </div>
-      <p className="mt-2 max-w-md text-xs leading-relaxed text-fg-faint">
+      {/* fg-dim, not fg-faint (a11y audit fix): a consent/legal-basis
+          statement, not an incidental hint — fg-faint fails WCAG AA below
+          18px. */}
+      <p className="mt-2 max-w-md text-xs leading-relaxed text-fg-dim">
         Double opt-in: we send one confirmation email and nothing more until
         you click it. Unsubscribe with one click, any time. Consent is the
         lawful basis — details in the privacy notice above.

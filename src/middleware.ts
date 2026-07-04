@@ -86,6 +86,7 @@ export const config = {
     '/account/:path*',
     '/premium/:path*',
     '/api/stripe/:path*',
+    '/checkout/:path*',
     '/play',
     '/play/:path*',
   ],

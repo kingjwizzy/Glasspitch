@@ -108,7 +108,9 @@ export default async function JoinPoolPage({ params, searchParams }: JoinPagePro
         </section>
       )}
 
-      <p className="text-xs leading-relaxed text-fg-faint">
+      {/* fg-dim, not fg-faint (a11y audit fix): a privacy statement, not an
+          incidental hint — fg-faint fails WCAG AA below 18px. */}
+      <p className="text-xs leading-relaxed text-fg-dim">
         Pool members see your display name and, once a fixture has kicked
         off, your picks for it — never your email. Details in the{' '}
         <Link href="/privacy" className="text-green underline hover:text-green-bright">

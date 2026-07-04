@@ -35,8 +35,11 @@ export const metadata: Metadata = {
  *  arrow + sign carry the direction (colour is never the sole signal). */
 function MoveFigure({ delta }: { delta: number | null }) {
   if (delta === null) {
+    // fg-dim, not fg-faint (a11y audit fix): this "no prior snapshot" state is
+    // a genuine data reading, same as the printed 0.0 case below — fg-faint
+    // fails WCAG AA below 18px.
     return (
-      <span aria-label="No previous snapshot to compare" className="font-mono text-fg-faint">
+      <span aria-label="No previous snapshot to compare" className="font-mono text-fg-dim">
         —
       </span>
     );
@@ -180,22 +183,22 @@ export default async function BoardPage() {
                         <span className="block font-mono text-2xl font-semibold text-fg">
                           {pct(t.probWin)}
                         </span>
-                        <span className="block text-[11px] text-fg-faint">win</span>
+                        <span className="block text-[11px] text-fg-dim">win</span>
                       </p>
                     </div>
                     <dl className="mt-2.5 space-y-1 border-t border-line pt-2.5 text-xs">
                       <div className="flex items-center justify-between gap-3">
-                        <dt className="text-fg-faint">Clean sheet</dt>
+                        <dt className="text-fg-dim">Clean sheet</dt>
                         <dd className="font-mono text-fg-dim">{pct(t.probCleanSheet)}</dd>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <dt className="text-fg-faint">xG for / against</dt>
+                        <dt className="text-fg-dim">xG for / against</dt>
                         <dd className="font-mono text-fg-dim">
                           {t.xgFor.toFixed(1)} / {t.xgAgainst.toFixed(1)}
                         </dd>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <dt className="text-fg-faint">Day move</dt>
+                        <dt className="text-fg-dim">Day move</dt>
                         <dd>
                           <MoveFigure delta={t.deltaProbWin} />
                         </dd>

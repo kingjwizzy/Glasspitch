@@ -237,6 +237,12 @@ export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
               awayLabel={pick.away}
             />
             <p className="mt-3 text-xs text-fg-dim">What happened</p>
+            {/* a11y audit fix: this bar encodes the one-hot ACTUAL result, not
+                a forecast — `semantics="result"` gives it its own accurate
+                accessible name ("Final result — Brazil win" / "…draw")
+                instead of inheriting the default "Win probability — …" name,
+                which would otherwise misread a 100%/0%/0% result as a
+                prediction. */}
             <ProbabilityBar
               variant="row"
               home={actual.home}
@@ -244,6 +250,7 @@ export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
               away={actual.away}
               homeLabel={pick.home}
               awayLabel={pick.away}
+              semantics="result"
             />
           </div>
 
@@ -271,7 +278,10 @@ export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
                   {counts.yourBrier.toFixed(3)}
                 </span>
                 <span className="text-xs text-fg-dim">you</span>
-                <span className="text-xs text-fg-faint">vs</span>
+                {/* fg-dim, not fg-faint (a11y audit fix): matches the "you" /
+                    "model" labels either side — fg-faint fails WCAG AA below
+                    18px. */}
+                <span className="text-xs text-fg-dim">vs</span>
                 <span className="font-mono text-2xl font-medium text-fg-dim">
                   {counts.modelBrier.toFixed(3)}
                 </span>

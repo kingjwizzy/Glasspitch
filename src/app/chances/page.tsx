@@ -40,8 +40,10 @@ export const metadata: Metadata = {
  *  reinforcement only (DESIGN.md §2). */
 function MoveFigure({ delta }: { delta: number | null }) {
   if (delta === null) {
+    // fg-dim, not fg-faint (a11y audit fix): a genuine data reading, same as
+    // the printed 0.0 case below — fg-faint fails WCAG AA below 18px.
     return (
-      <span aria-label="No previous simulation to compare" className="font-mono text-fg-faint">
+      <span aria-label="No previous simulation to compare" className="font-mono text-fg-dim">
         —
       </span>
     );

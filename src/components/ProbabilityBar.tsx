@@ -18,6 +18,19 @@ import { pct, pctFigure } from '@/lib/format';
 
 export type ProbabilityBarVariant = 'legend' | 'hero' | 'row';
 
+/** What this bar's segments actually encode, for its `role="img"` accessible
+ *  name (a11y audit fix):
+ *   - `prediction` (default) — a probability split; keeps the existing
+ *     "Win probability — …" name for every current caller, unchanged.
+ *   - `result`     — a one-hot ACTUAL outcome (see SettledPickReveal's
+ *     `ONE_HOT` map), rendered with this same component for a visual
+ *     before/after pair. Without this, a screen reader hears the prediction
+ *     name on both bars — e.g. "Win probability — Brazil 100%, draw 0%,
+ *     Argentina 0%" for a bar that actually shows the final result, not a
+ *     forecast. `result` instead announces "Final result — Brazil win" /
+ *     "Final result — draw", derived from whichever segment is largest. */
+export type ProbabilityBarSemantics = 'prediction' | 'result';
+
 export interface ProbabilityBarProps {
   home: number;
   draw: number;
@@ -34,6 +47,9 @@ export interface ProbabilityBarProps {
    *  (every other caller/variant, unchanged). */
   homeLabel?: string;
   awayLabel?: string;
+  /** See `ProbabilityBarSemantics`. Defaults to `'prediction'`, which
+   *  preserves the accessible name every existing caller already gets. */
+  semantics?: ProbabilityBarSemantics;
 }
 
 const SEGMENTS = [
@@ -57,6 +73,7 @@ export default function ProbabilityBar({
   variant = 'legend',
   homeLabel,
   awayLabel,
+  semantics = 'prediction',
 }: ProbabilityBarProps) {
   const values: Record<(typeof SEGMENTS)[number]['key'], number> = {
     home,
@@ -69,12 +86,24 @@ export default function ProbabilityBar({
   const awayWord = awayLabel ?? 'away';
   const label = `${homeWord} ${pct(home)}, draw ${pct(draw)}, ${awayWord} ${pct(away)}`;
 
+  // `result` bars are fed a one-hot trio (exactly one segment is the winner),
+  // so "biggest segment" reliably recovers which outcome actually happened —
+  // no separate "what happened" prop needed from callers.
+  const resultWinner =
+    home >= draw && home >= away ? 'home' : away >= draw && away >= home ? 'away' : 'draw';
+  const resultPhrase =
+    resultWinner === 'home' ? `${homeWord} win`
+    : resultWinner === 'away' ? `${awayWord} win`
+    : 'draw';
+  const accessibleName =
+    semantics === 'result' ? `Final result — ${resultPhrase}` : `Win probability — ${label}`;
+
   return (
     <div className={className}>
       <div
         className={`flex ${BAR_HEIGHT[variant]} w-full gap-0.5 overflow-hidden rounded-full`}
         role="img"
-        aria-label={`Win probability — ${label}`}
+        aria-label={accessibleName}
       >
         {SEGMENTS.map((s) => (
           <div

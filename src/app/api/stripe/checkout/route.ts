@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe/client';
 import { resolvePriceId } from '@/lib/stripe/plans';
+import { isCrossOriginRequest } from '@/lib/security/originGuard';
 import { SITE_URL } from '@/lib/constants';
 import type { PremiumPlan } from '@/lib/types';
 
@@ -9,12 +10,19 @@ import type { PremiumPlan } from '@/lib/types';
 // (ARCHITECTURE.md §4 v2). Node runtime (default for Route Handlers; explicit
 // per the frontend-dev brief).
 //
-// POST is the plain <form method="POST"> on /premium — no client JS, no
-// @stripe/stripe-js. GET (v2.1, audit #6 "resume to Stripe" friction) exists
-// solely so an anonymous visitor can be sent to /login and, once they click
-// the magic link, land back on THIS SAME URL (?plan preserved) and complete
-// checkout immediately — instead of being dumped back on /premium to pick a
-// plan again. Both verbs run the exact same authenticated checkout logic.
+// POST-only (security audit finding #4/CSRF fix): this is the plain
+// <form method="POST"> on /premium — no client JS, no @stripe/stripe-js — and
+// is guarded by isCrossOriginRequest below since Route Handlers, unlike
+// Server Actions, get no automatic Origin check from Next.js. A GET verb used
+// to exist purely for the "resume to Stripe" flow (an anonymous visitor sent
+// to /login mid-checkout, then bounced straight back here once they clicked
+// the magic link) — a state-changing (Checkout-session-creating,
+// Stripe-billed) action must never be GET-reachable, since a GET can be
+// triggered as a same-site side effect (an <img>/prefetched <a>, no CSRF
+// token needed) far more easily than a POST. The resume flow now lands
+// instead on /checkout/resume, a plain page with its own
+// <form method="POST" action="/api/stripe/checkout">, so finishing checkout
+// after signing back in still only ever happens via a real POST.
 //
 // NEVER sets `payment_method_types` — the Stripe Dashboard's configured
 // methods apply. Degrades to 503 (not a crash) when Stripe or the requested
@@ -31,6 +39,10 @@ function parsePlan(value: FormDataEntryValue | string | null): PremiumPlan | nul
 }
 
 async function handleCheckout(request: NextRequest, plan: PremiumPlan | null) {
+  if (isCrossOriginRequest(request)) {
+    return NextResponse.json({ error: 'Cross-origin request rejected.' }, { status: 403 });
+  }
+
   const stripe = getStripe();
   if (!stripe) return unavailable('Stripe is not configured.');
 
@@ -49,11 +61,13 @@ async function handleCheckout(request: NextRequest, plan: PremiumPlan | null) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user || !user.email) {
-    // Resume-to-Stripe: send the visitor to sign in, then straight back to
-    // THIS route (not /premium) with the same plan, so magic-link login
-    // resumes directly into Checkout rather than losing their choice.
+    // Resume-to-Stripe: send the visitor to sign in, then to /checkout/resume
+    // (not /premium) with the same plan preserved, so magic-link login
+    // resumes straight into a one-click "Continue to checkout" rather than
+    // losing their choice — that page's own POST form is what actually
+    // re-enters this handler (this route is POST-only; see the file banner).
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('next', `/api/stripe/checkout?plan=${plan}`);
+    loginUrl.searchParams.set('next', `/checkout/resume?plan=${plan}`);
     return NextResponse.redirect(loginUrl, 303);
   }
 
@@ -117,9 +131,4 @@ async function handleCheckout(request: NextRequest, plan: PremiumPlan | null) {
 export async function POST(request: NextRequest) {
   const form = await request.formData();
   return handleCheckout(request, parsePlan(form.get('plan')));
-}
-
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  return handleCheckout(request, parsePlan(searchParams.get('plan')));
 }

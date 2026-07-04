@@ -176,7 +176,10 @@ export default async function TickerPage() {
                       if (!cell) {
                         return (
                           <td key={i} className="py-3 pr-2 align-top">
-                            <span className="font-mono text-xs text-fg-faint">—</span>
+                            {/* fg-dim, not fg-faint (a11y audit fix): a real
+                                "no fixture that far out" data reading, not
+                                incidental — fg-faint fails AA below 18px. */}
+                            <span className="font-mono text-xs text-fg-dim">—</span>
                           </td>
                         );
                       }

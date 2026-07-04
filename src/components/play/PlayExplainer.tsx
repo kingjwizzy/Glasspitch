@@ -81,7 +81,10 @@ export default function PlayExplainer() {
           Sign in to play
           <ArrowRightIcon className="h-4 w-4" />
         </Link>
-        <p className="mt-2 text-xs text-fg-faint">
+        {/* fg-dim, not fg-faint (a11y audit fix): tells a visitor what
+            signing up actually requires, not an incidental hint — fg-faint
+            fails WCAG AA below 18px. */}
+        <p className="mt-2 text-xs text-fg-dim">
           A free account — email and an 18+ confirmation, nothing else.
         </p>
       </section>

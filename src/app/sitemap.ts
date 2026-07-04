@@ -70,13 +70,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly',
       priority: 0.6,
     },
-    // Static legal pages (v2). Everything auth/account/premium-gated is
-    // deliberately NOT listed here — noindexed and out of the sitemap until
-    // the owner flips premium live (ARCHITECTURE.md §13). This includes
-    // /premium itself: unlike its own page-level `robots` (which already
-    // flips to indexable at NEXT_PUBLIC_PREMIUM_LIVE==='1'), the sitemap has
-    // no matching conditional entry for it yet — left as a follow-up rather
-    // than added here (audit #10 item 4).
+    // Static legal pages (v2). Everything auth/account-gated is deliberately
+    // NOT listed here — noindexed and out of the sitemap until the owner
+    // flips premium live (ARCHITECTURE.md §13).
+    ...(process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1'
+      ? // /premium: only added once its own page-level `robots` gate (same
+        // env var, src/app/premium/page.tsx) has already flipped it
+        // indexable — otherwise sitemap presence and indexability would
+        // fall out of lockstep (audit #10 item 4).
+        ([
+          { url: `${SITE_URL}/premium`, changeFrequency: 'monthly' as const, priority: 0.4 },
+        ] satisfies MetadataRoute.Sitemap)
+      : []),
     { url: `${SITE_URL}/privacy`, changeFrequency: 'monthly', priority: 0.3 },
     { url: `${SITE_URL}/terms`, changeFrequency: 'monthly', priority: 0.3 },
     { url: `${SITE_URL}/refunds`, changeFrequency: 'monthly', priority: 0.3 },
