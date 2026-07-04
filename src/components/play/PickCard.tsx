@@ -107,6 +107,31 @@ export default function PickCard({
   const outcomeLabel = (key: 'home' | 'draw' | 'away') =>
     key === 'home' ? `${home} win` : key === 'away' ? `${away} win` : 'Draw';
 
+  // Conviction (kick plan #2 — a money-free "stake"): read the biggest leg so a
+  // bold, concentrated call reads differently from a hedge. Derived purely from
+  // the visitor's OWN numbers, so it never leaks/anchors on the model's call.
+  const topIdx =
+    values[0] >= values[1] && values[0] >= values[2] ? 0 : values[1] >= values[2] ? 1 : 2;
+  const maxLeg = values[topIdx];
+  const topKey = (['home', 'draw', 'away'] as const)[topIdx];
+  const topPhrase = topKey === 'home' ? home : topKey === 'away' ? away : 'a draw';
+  const conviction = maxLeg >= 80 ? 'bold' : maxLeg >= 58 ? 'strong' : 'lean';
+  const convictionLabel =
+    conviction === 'bold' ? 'a bold call' : conviction === 'strong' ? 'a strong call' : 'a lean';
+  const convictionTone =
+    conviction === 'bold'
+      ? 'text-away'
+      : conviction === 'strong'
+        ? 'text-green-bright'
+        : 'text-fg-dim';
+  // Honest trade-off, stated plainly — never a nudge to go bigger (DESIGN.md §6).
+  const tradeoff =
+    conviction === 'bold'
+      ? "Land it and you'll likely out-call the model — miss it and it stings on your record."
+      : conviction === 'strong'
+        ? 'More upside here than playing it safe — and more to lose.'
+        : 'A cautious call — less at stake either way.';
+
   return (
     <li className="glass px-4 py-4">
       <div className="flex items-baseline justify-between gap-3">
@@ -173,6 +198,15 @@ export default function PickCard({
         </div>
       )}
 
+      {/* Conviction read — turns the spread into a felt call (kick plan #2). */}
+      {touched && (
+        <p className="mt-2 text-sm text-fg-dim">
+          That&rsquo;s <span className={`font-semibold ${convictionTone}`}>{convictionLabel}</span>{' '}
+          on <span className="text-fg">{topPhrase}</span>.
+          {!committed && <span className="mt-0.5 block text-xs text-fg-dim">{tradeoff}</span>}
+        </p>
+      )}
+
       <details className="mt-2">
         <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm text-green transition-colors hover:text-green-bright">
           Fine-tune the numbers
@@ -230,8 +264,15 @@ export default function PickCard({
             {state.status === 'error' && (
               <span className="text-miss-bright">{state.message}</span>
             )}
+            {/* Lock-in ceremony (kick plan #3): a fresh save gets a rising
+                "Locked in" stamp — the moment the call becomes an event. The
+                .rise-in keyframe already sits behind the reduced-motion
+                kill-switch, so this is instant when motion is reduced. */}
             {state.status === 'saved' && (
-              <span className="text-fg-dim">{state.message}</span>
+              <span className="rise-in inline-flex items-center gap-1.5 rounded-full bg-green/15 px-2.5 py-1 font-medium text-green-bright">
+                <LockClosedIcon className="h-3 w-3" />
+                Locked in
+              </span>
             )}
             {state.status === 'idle' && committed && (
               <span className="text-fg-dim">
