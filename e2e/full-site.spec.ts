@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import {
   expectLandmarksAndCompliance,
   expectNoSeriousA11yViolations,
@@ -55,15 +56,20 @@ for (const path of NEW_PAGES) {
 // static link to /login, which itself redirects an already-signed-in visitor
 // to /account.)
 //
-// Audit fix #2 (CRITICAL): below md there is no room for seven inline links
+// Audit fix #2 (CRITICAL): below md there is no room for eight inline links
 // on a phone-width viewport (a 393px Pixel 5 clipped the row to "Home | Ma…"),
-// so Header's inline `nav[aria-label="Primary"]` row is now `hidden md:flex`
-// and a below-md hamburger client island (src/components/MobileNav.tsx) takes
-// over instead. The two viewport projects therefore need two different
-// routes to the same seven destinations -- split into a desktop test (the
-// inline row, unchanged contract) and a mobile test that actually opens the
-// hamburger dialog rather than asserting on a nav row this viewport
-// intentionally keeps invisible.
+// so Header's inline `nav[aria-label="Primary"]` row is now `hidden md:flex`.
+//
+// RAMBO wave 3 #6 amendment: below md, the reachable affordance is no longer
+// a single hamburger beside the header -- Home/Matches/Play/Track record were
+// promoted into a persistent BottomTabBar (src/components/BottomTabBar.tsx),
+// one thumb-tap away, and MobileNav (src/components/MobileNav.tsx) now renders
+// ONLY the leftover OVERFLOW destinations (Chances/Leagues/Leaderboard/About)
+// as the bar's 5th "More" slot. The two viewport projects therefore need two
+// different routes to the same destinations -- split into a desktop test (the
+// inline row, unchanged contract) and a mobile test that opens the "More"
+// dialog and finds only the overflow set (the bottom-tab-bar's own contract is
+// covered separately below).
 test('primary nav (desktop) shows Matches, Chances, Leagues, Play, and a static Sign in link to /login', async ({
   page,
 }, testInfo) => {
@@ -94,6 +100,12 @@ test('primary nav (desktop) shows Matches, Chances, Leagues, Play, and a static 
     'href',
     '/play',
   );
+  // RAMBO wave 2 #5: "Leaderboard" (the public, opt-in Beat the Model board)
+  // joined the same quiet inline row.
+  await expect(primaryNav.getByRole('link', { name: 'Leaderboard', exact: true })).toHaveAttribute(
+    'href',
+    '/leaderboard',
+  );
   // "Sign in" sits just outside the <nav> landmark itself (Header.tsx) but is
   // still a plain static link, not a client-side auth affordance.
   await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveAttribute(
@@ -102,31 +114,31 @@ test('primary nav (desktop) shows Matches, Chances, Leagues, Play, and a static 
   );
 });
 
-// The seven NAV destinations MobileNav renders (mirrors Header's exported
-// `NAV`, kept literal here rather than imported so this spec independently
-// pins the full contract rather than trusting the same source it's testing).
-const MOBILE_NAV_LINKS = [
-  { name: 'Home', href: '/' },
-  { name: 'Matches', href: '/matches' },
+// The 4 OVERFLOW destinations MobileNav's "More" panel renders now that
+// Home/Matches/Play/Track record live one thumb-tap away on the persistent
+// BottomTabBar (RAMBO wave 3 #6). Mirrors Header's exported `NAV` filtered by
+// `BOTTOM_TAB_HREFS` (src/components/MobileNav.tsx's own `OVERFLOW_NAV`), kept
+// literal here rather than imported so this spec independently pins the
+// contract rather than trusting the same source it's testing.
+const MOBILE_OVERFLOW_NAV_LINKS = [
   { name: 'Chances', href: '/chances' },
   { name: 'Leagues', href: '/leagues' },
-  { name: 'Play', href: '/play' },
-  { name: 'Track record', href: '/ledger' },
+  { name: 'Leaderboard', href: '/leaderboard' },
   { name: 'About', href: '/about' },
 ] as const;
 
-test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinations plus Sign in', async ({
+test('primary nav (mobile): the "More" panel reaches the 4 overflow destinations plus Sign in', async ({
   page,
 }, testInfo) => {
   test.skip(
     testInfo.project.name !== 'mobile',
-    'mobile-only: exercises the below-md MobileNav hamburger',
+    'mobile-only: exercises the below-md MobileNav "More" panel',
   );
   await page.goto('/', { waitUntil: 'load' });
 
   // The inline row stays in the DOM (aria-controls keeps pointing at a real
-  // element) but is not visible at this viewport — the hamburger toggle is
-  // the reachable affordance instead.
+  // element) but is not visible at this viewport — the bottom bar's "More"
+  // toggle is the reachable affordance for the overflow set instead.
   const primaryNav = page.locator('nav[aria-label="Primary"]');
   await expect(primaryNav).toBeHidden();
 
@@ -144,6 +156,10 @@ test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinat
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAccessibleName('Open menu');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // The toggle is now the bottom bar's own 5th slot, captioned "More"
+  // (aria-hidden — see MobileNav.tsx's label/name-mismatch note, exercised
+  // directly in the a11y test below).
+  await expect(toggle).toContainText('More');
 
   // Closed: no dialog is actually visible yet (MobileNav's panel stays
   // parked in the DOM under `hidden`, out of the accessibility tree).
@@ -156,9 +172,18 @@ test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinat
   const dialog = page.getByRole('dialog', { name: 'Primary navigation' });
   await expect(dialog).toBeVisible();
 
-  // All 7 destinations plus "Sign in" are reachable inside the open panel.
-  for (const { name, href } of MOBILE_NAV_LINKS) {
+  // The 4 overflow destinations plus "Sign in" are reachable inside the open
+  // panel — Home/Matches/Play/Track record are DELIBERATELY absent here: they
+  // now live on the persistent bottom tab bar instead (see the dedicated test
+  // below), so this panel must never duplicate them.
+  for (const { name, href } of MOBILE_OVERFLOW_NAV_LINKS) {
     await expect(dialog.getByRole('link', { name, exact: true })).toHaveAttribute('href', href);
+  }
+  for (const name of ['Home', 'Matches', 'Play', 'Track record'] as const) {
+    await expect(
+      dialog.getByRole('link', { name, exact: true }),
+      `"${name}" moved to the bottom tab bar — the overflow panel must not duplicate it`,
+    ).toHaveCount(0);
   }
   await expect(dialog.getByRole('link', { name: 'Sign in', exact: true })).toHaveAttribute(
     'href',
@@ -167,6 +192,39 @@ test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinat
   // NEXT_PUBLIC_PREMIUM_LIVE is unset in this build, so "Go Premium" must not
   // appear yet (env-gated — see src/components/MobileNav.tsx).
   await expect(dialog.getByRole('link', { name: 'Go Premium' })).toHaveCount(0);
+
+  // Every link in the open panel, including the last ("Sign in"), must
+  // actually be reachable inside the viewport — not just present in the DOM.
+  // KNOWN BUG (frontend-dev, not a test issue): MobileNav is now mounted as
+  // BottomTabBar's 5th slot, and that bar's `<nav>` carries `backdrop-blur-sm`
+  // — per the CSS Filter Effects spec, a `backdrop-filter` on an ancestor
+  // becomes the CONTAINING BLOCK for descendant `position: fixed` elements,
+  // exactly like `transform`/`filter`. MobileNav's overlay
+  // (`<div class="fixed inset-0 ...">`) is now a descendant of that
+  // bottom-anchored, ~56px-tall `<nav>` instead of the viewport, so the
+  // overlay/backdrop/dialog are squeezed into that tiny box pinned to the
+  // BOTTOM of the screen rather than covering the full viewport — the
+  // previous mount point (inside the sticky, TOP-anchored Header, which also
+  // carries backdrop-blur-sm) happened to hide this exact same quirk, because
+  // that ancestor's top edge already coincided with the viewport's top edge.
+  // Confirmed live (Pixel 5 viewport, 393×727): the panel's own bounding box
+  // renders at roughly y≈683–995 — i.e. the bottom ~40% of its content,
+  // including this "Sign in" link, sits BELOW the visible viewport with no
+  // way to scroll it into view (the overlay is fixed to the tiny nav box, not
+  // the page). This makes roughly half the "More" panel unreachable on a real
+  // phone. Fix belongs in BottomTabBar.tsx/MobileNav.tsx (e.g. render the
+  // overlay through a portal to `document.body`, or drop `backdrop-blur-sm`
+  // from the bottom nav) — NOT here.
+  for (const { name } of MOBILE_OVERFLOW_NAV_LINKS) {
+    await expect(
+      dialog.getByRole('link', { name, exact: true }),
+      `"${name}" must be reachable inside the viewport, not merely present in the DOM`,
+    ).toBeInViewport();
+  }
+  await expect(
+    dialog.getByRole('link', { name: 'Sign in', exact: true }),
+    '"Sign in" must be reachable inside the viewport, not merely present in the DOM',
+  ).toBeInViewport();
 
   // A link click closes the panel and actually navigates.
   await dialog.getByRole('link', { name: 'About', exact: true }).click();
@@ -184,6 +242,95 @@ test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinat
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(toggle).toBeFocused();
+});
+
+// ── Bottom tab bar (RAMBO wave 3 #6) — the persistent, thumb-reachable below-
+// md primary reach for Home/Matches/Play/Track record, replacing "every
+// destination is two taps deep behind a hamburger" (src/components/
+// BottomTabBar.tsx). A SECOND, DISTINCTLY-LABELLED `<nav>` landmark from
+// Header's own `nav[aria-label="Primary"]` — never the same reach mechanism
+// at both viewports. ──────────────────────────────────────────────────────
+test('bottom tab bar: mobile primary reach with 5 slots incl. "More" and an active-state tab; desktop keeps the header nav as the reach', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/', { waitUntil: 'load' });
+  const bottomNav = page.locator('nav[aria-label="Bottom navigation"]');
+
+  if (testInfo.project.name === 'mobile') {
+    await expect(bottomNav).toBeVisible();
+
+    const tabs = [
+      { name: 'Home', href: '/' },
+      { name: 'Matches', href: '/matches' },
+      { name: 'Play', href: '/play' },
+      { name: 'Track record', href: '/ledger' },
+    ] as const;
+    for (const { name, href } of tabs) {
+      await expect(bottomNav.getByRole('link', { name, exact: true })).toHaveAttribute(
+        'href',
+        href,
+      );
+    }
+    // 5 slots total: the 4 tabs above plus the "More" toggle (shares the same
+    // "Open menu"/"Close menu" accessible name as the hamburger contract
+    // exercised above).
+    await expect(bottomNav.locator('> ul > li')).toHaveCount(5);
+    const more = bottomNav.getByRole('button', { name: /open menu|close menu/i });
+    await expect(more).toBeVisible();
+
+    // Active-state: on "/", the Home tab carries aria-current="page" and NO
+    // other tab does (BottomTabLink.tsx's isActive — exact match for "/",
+    // prefix match for everything else).
+    await expect(bottomNav.getByRole('link', { name: 'Home', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    for (const name of ['Matches', 'Play', 'Track record'] as const) {
+      await expect(bottomNav.getByRole('link', { name, exact: true })).not.toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+    }
+  } else {
+    // Desktop: the bottom bar is `md:hidden` — the header's inline nav is the
+    // one and only primary reach, never a secondary/duplicate mechanism.
+    await expect(bottomNav).toBeHidden();
+    await expect(page.locator('nav[aria-label="Primary"]')).toBeVisible();
+  }
+});
+
+test('bottom tab bar (mobile): two distinctly-labelled nav landmarks, no label/name mismatch on the "More" toggle', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'mobile-only: exercises the below-md landmark set',
+  );
+  await page.goto('/', { waitUntil: 'load' });
+
+  // Every <nav> on the page carries its own aria-label, and no two share one
+  // — Header's `nav[aria-label="Primary"]` (hidden, still attached) and
+  // BottomTabBar's `nav[aria-label="Bottom navigation"]` (visible) must never
+  // read as ambiguous, identically-labelled landmarks to a screen reader.
+  const navs = page.locator('nav');
+  const navCount = await navs.count();
+  expect(navCount).toBeGreaterThanOrEqual(2);
+  const labels = new Set<string>();
+  for (let i = 0; i < navCount; i++) {
+    const label = await navs.nth(i).getAttribute('aria-label');
+    expect(label, `nav[${i}] must have an aria-label`).toBeTruthy();
+    labels.add(label ?? '');
+  }
+  expect(labels.size, 'every nav landmark must have a distinct aria-label').toBe(navCount);
+
+  // WCAG 2.5.3 Label in Name: the "More" toggle's visible caption is
+  // aria-hidden (a redundant visual cue, not the accessible name — see
+  // MobileNav.tsx's comment), so axe's dedicated rule is the direct,
+  // automated check that this is never a genuine mismatch.
+  const results = await new AxeBuilder({ page })
+    .withRules(['label-content-name-mismatch'])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });
 
 // ── /matches (populated via PREVIEW_MATCHES=1) ──────────────────────────────

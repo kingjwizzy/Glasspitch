@@ -175,12 +175,76 @@ test('/ledger (populated) renders the running record, calibration table, and sco
   const calibrationSection = page.locator('section[aria-labelledby="calibration-heading"]');
   await expect(calibrationSection.getByText('0–10%')).toBeVisible();
 
+  // RAMBO wave 2 #3 "checking our work" — the section carries its own
+  // anchor-able id, distinct from (but alongside) calibration-heading.
+  await expect(page.locator('section#checking-our-work')).toHaveCount(1);
+  await expect(
+    page.getByRole('heading', { name: 'Calibration — checking our work' }),
+  ).toBeVisible();
+
+  // The reliability diagram is a genuine role=img figure (a hand-built inline
+  // SVG, not a data table) — CalibrationTable is its full text alternative,
+  // rendered alongside it, never a replacement for one or the other.
+  const diagram = calibrationSection.locator('svg[role="img"]');
+  await expect(diagram).toHaveCount(1);
+  // aria-labelledby references BOTH the <title> and the longer <desc> (the
+  // accessible name concatenates every referenced element's text) — match
+  // the leading <title> text rather than the whole concatenated string.
+  await expect(diagram).toHaveAccessibleName(
+    /^Reliability diagram: predicted probability versus actual hit rate/,
+  );
+  const calibrationTable = calibrationSection.locator('table');
+  await expect(calibrationTable).toHaveCount(1);
+  await expect(calibrationTable.locator('thead th')).toHaveText([
+    'Confidence band',
+    'Data points',
+    'We predicted',
+    'It happened',
+  ]);
+  // Same ten bands render in both the diagram (as data points, dot count <=
+  // populated bands) and the table (as rows) — the table is the full text
+  // alternative for every band, including ones the diagram can't draw a dot
+  // for (n=0), so it always has at least as many rows as the diagram has dots.
+  const dotCount = await diagram.locator('circle[fill-opacity]').count();
+  const tableRowCount = await calibrationTable.locator('tbody tr').count();
+  expect(tableRowCount).toBeGreaterThanOrEqual(dotCount);
+  expect(dotCount).toBeGreaterThan(0);
+
   // At least one scored row in "Every scored call", with a Brier score
   // rendered as a decimal (not the empty-state "—").
   const scoredCallsSection = page.locator('section[aria-labelledby="calls-heading"]');
   const rows = scoredCallsSection.locator('tbody tr');
   expect(await rows.count()).toBeGreaterThan(0);
   await expect(rows.first()).toContainText(/\d\.\d{2}/);
+});
+
+// ── /ledger, populated — the share loop (RAMBO wave 2 #2) ──────────────────
+test('/ledger (populated) offers the share control once there is a real record to point at', async ({
+  page,
+}) => {
+  // Force the deterministic fallback-links branch (ShareRow.tsx) regardless
+  // of whether the underlying browser happens to implement the Web Share
+  // API — this asserts the always-present manual fallback, not whichever
+  // path a given CI runner's Chromium build takes.
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, 'share', { value: undefined, configurable: true });
+  });
+  await page.goto('/ledger', { waitUntil: 'load' });
+
+  const shareButton = page.getByRole('button', { name: 'Share' });
+  await expect(shareButton).toBeVisible();
+  await expect(shareButton).toHaveAttribute('aria-expanded', 'false');
+
+  // Revealing the fallback intent links (no Web Share API in a headless
+  // Chromium context) exposes X / Bluesky / WhatsApp, each a real link.
+  await shareButton.click();
+  await expect(shareButton).toHaveAttribute('aria-expanded', 'true');
+  for (const name of ['X', 'Bluesky', 'WhatsApp'] as const) {
+    const link = page.getByRole('link', { name, exact: true });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('href', /^https:\/\//);
+  }
 });
 
 // ── /responsible-gambling — real support links, not placeholders ───────────

@@ -51,23 +51,48 @@ test('/ (empty) renders honest structural empty states — never fake data', asy
     '/ledger',
   );
 
+  // RAMBO wave 3 #3a: the worked example (src/components/home/WorkedExample.tsx)
+  // teaches the ledger mechanism on the young ledger's proof rail — clearly
+  // labelled, never mistakable for a real scored call: "example" appears
+  // twice, and the teams are the generic placeholders "Team A"/"Team B" (no
+  // visitor could read those as an actual fixture).
+  await expect(hero.getByText('Example call — not a real match')).toBeVisible();
+  await expect(hero.getByText('Team A', { exact: true })).toBeVisible();
+  await expect(hero.getByText('Team B', { exact: true })).toBeVisible();
+  await expect(hero.getByText(/illustrative only/)).toBeVisible();
+  // Styled with a DASHED border (`.border-dashed` — unique to
+  // WorkedExample.tsx in this codebase) — visually distinct from the
+  // solid-bordered card real receipts use, so the difference is legible even
+  // without reading the copy (WorkedExample.tsx's own contract).
+  await expect(hero.locator('.border-dashed')).toHaveText(/Example call — not a real match/);
+
   // Matchday stream + watching: honest empties.
   await expect(page.getByText(/No upcoming fixtures right now/)).toBeVisible();
   await expect(page.getByText(/Nothing flagged yet/)).toBeVisible();
 
-  // Receipts: the record opens only after the first final whistle.
+  // Receipts: the record opens only after the first final whistle — the SAME
+  // worked example teaches the receipt format here too.
   const receipts = page.locator('section[aria-labelledby="recent-heading"]');
   await expect(
     receipts.getByText('The record opens after the first final whistle — misses included.'),
   ).toBeVisible();
   await expect(receipts.locator('a[href^="/match/"]')).toHaveCount(0);
+  await expect(receipts.getByText('Example call — not a real match')).toBeVisible();
 
   // Record band: structural honesty — the immutability claim, but NO invented
-  // aggregate figures (no three-decimal metrics anywhere in the band).
+  // aggregate figures (no three-decimal metrics anywhere in the band) — the
+  // worked example's own illustrative percentage/score are the ONLY figures
+  // in the band, never presentable as the real record.
   const band = page.locator('section[aria-labelledby="record-heading"]');
   await expect(band.getByRole('heading', { name: 'The record so far' })).toBeVisible();
   await expect(band.getByText(/cannot be edited, not even by us/)).toBeVisible();
+  await expect(band.getByText('Example call — not a real match')).toBeVisible();
   expect(await band.innerText()).not.toMatch(/\d\.\d{3}/);
+
+  // Across the whole empty homepage, the worked example appears exactly on
+  // the three young-ledger surfaces it's wired into (ProofRail, RecentCalls,
+  // RecordBand) — never a fourth, uncontrolled copy.
+  expect(await page.getByText('Example call — not a real match').count()).toBe(3);
 });
 
 test('/ (empty) keeps the page skeleton: 11 sections, one sign-up end-cap, disclaimer', async ({

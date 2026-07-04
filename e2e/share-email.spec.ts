@@ -23,11 +23,15 @@ import {
 
 // ── 1. OG image routes ──────────────────────────────────────────────────────
 // /match/1 renders via PREVIEW_MATCH=1, so the per-match receipt card is
-// exercised with deterministic data; the other two are static-shell cards.
+// exercised with deterministic data; the rest are static-shell/live-read
+// cards (RAMBO wave W6 share kit: /ledger and /board joined the original
+// three-route set, sharing the same "real PNG, no pixel assertions" contract).
 const OG_ROUTES = [
   '/opengraph-image',
   '/chances/opengraph-image',
   '/match/1/opengraph-image',
+  '/ledger/opengraph-image',
+  '/board/opengraph-image',
 ] as const;
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

@@ -76,6 +76,67 @@ test.describe('public pages emit no Set-Cookie (cacheable; no auth side-effects)
   }
 });
 
+// ── /api/stripe/checkout CSRF hardening (security audit finding #4) ────────
+// The route is now POST-only (a GET could be triggered as a same-site side
+// effect with no CSRF token needed -- see the route's own file banner), and
+// every POST is guarded by isCrossOriginRequest (src/lib/security/
+// originGuard.ts) since Route Handlers, unlike Server Actions, get no
+// automatic Origin check for free.
+test.describe('/api/stripe/checkout CSRF hardening', () => {
+  test('GET is rejected with 405 (state-changing route is POST-only)', async ({ request }) => {
+    const response = await request.get('/api/stripe/checkout');
+    expect(response.status()).toBe(405);
+  });
+
+  test('a cross-origin POST (forged Origin) is rejected with 403, never reaching Stripe', async ({
+    request,
+  }) => {
+    const response = await request.post('/api/stripe/checkout', {
+      headers: { origin: 'https://evil.example' },
+      form: { plan: 'monthly' },
+    });
+    expect(response.status()).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/cross-origin/i);
+  });
+
+  test('a same-origin POST with no plan gets a plain 400, never a crash', async ({ request }) => {
+    // No Origin/Sec-Fetch-Site header at all is treated as same-origin (a
+    // real cross-site browser request always carries one of the two -- see
+    // originGuard.ts's own reasoning) -- this proves the route is reachable
+    // at all and fails cleanly on the NEXT validation step (an invalid plan),
+    // rather than every non-GET request being blanket-rejected.
+    const response = await request.post('/api/stripe/checkout', { form: { plan: 'not-a-plan' } });
+    expect(response.status()).toBe(400);
+  });
+});
+
+// /checkout/resume — the "resume to Stripe" landing page (same audit fix):
+// noindexed, out of the sitemap/nav, reached only via the /login magic-link
+// redirect chain, and its own real <form method="POST"> is what re-enters
+// the checkout route.
+test('/checkout/resume renders and is noindexed', async ({ page }) => {
+  const response = await page.goto('/checkout/resume?plan=monthly', { waitUntil: 'load' });
+  expect(response?.status()).toBeLessThan(400);
+
+  await expect(page.getByRole('heading', { name: 'You’re signed in' })).toBeVisible();
+  await expect(page.getByText(/Continue to Stripe to finish subscribing/)).toBeVisible();
+
+  const robots = page.locator('meta[name="robots"]');
+  await expect(robots).toHaveAttribute('content', /noindex/);
+
+  const form = page.locator('form[action="/api/stripe/checkout"]');
+  await expect(form).toHaveCount(1);
+  await expect(form.locator('input[name="plan"]')).toHaveAttribute('value', 'monthly');
+  await expect(form.getByRole('button', { name: /Continue to checkout/ })).toBeVisible();
+});
+
+test('/checkout/resume redirects to /premium when no valid plan is given', async ({ page }) => {
+  const response = await page.goto('/checkout/resume', { waitUntil: 'load' });
+  expect(response?.status()).toBeLessThan(400);
+  await expect(page).toHaveURL(/\/premium$/);
+});
+
 test.describe('/api/stripe/webhook degrades gracefully -- never a 500', () => {
   test('an unsigned POST with a JSON body responds 400 or 503, never 500', async ({ request }) => {
     const response = await request.post('/api/stripe/webhook', {

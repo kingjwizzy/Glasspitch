@@ -29,6 +29,9 @@ test('/ hero band leads with the kicker, freshness stamp, and featured match', a
   await expect(
     page.getByText('Every call locked at kickoff, scored either way.'),
   ).toBeVisible();
+  // RAMBO wave 3 #3b: the calm subhead carries the compliance framing as a
+  // brand line — "probabilities, not tips" — not a scary banner.
+  await expect(page.getByText(/probabilities, not tips/)).toBeVisible();
 
   // The ISR freshness stamp: honest "as of" phrasing, never a live clock.
   await expect(
@@ -72,6 +75,20 @@ test('/ hero band leads with the kicker, freshness stamp, and featured match', a
 
   // "Also today" — the one-line factual mono summary under the card.
   await expect(page.getByText(/^Also today: /)).toBeVisible();
+});
+
+// ── "How it works" strip (RAMBO wave 3 #7b) — promotes the lock → whistle →
+// scored loop from empty-state-only decoration to an always-present, plainly
+// labelled explanation, right after the hero band. ─────────────────────────
+test('/ "How it works" strip states the three-step honesty loop', async ({ page }) => {
+  const strip = page.locator('section[aria-labelledby="how-it-works-heading"]');
+  await expect(strip.getByRole('heading', { name: 'How it works' })).toBeVisible();
+
+  const steps = strip.locator('ol > li');
+  await expect(steps).toHaveCount(3);
+  await expect(steps.nth(0)).toContainText('We publish before kickoff');
+  await expect(steps.nth(1)).toContainText("It locks and can't be edited");
+  await expect(steps.nth(2)).toContainText('We score it after full-time, misses included');
 });
 
 // ── §1 Proof rail: the record beside the featured match ────────────────────

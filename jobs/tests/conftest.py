@@ -44,6 +44,8 @@ class FakeStore:
         snapshots=None,
         tournament_chances=None,
         ledger_checkpoints=None,
+        profiles=None,
+        leaderboard_standings=None,
     ):
         self._upcoming = list(upcoming or [])
         self._finished = list(finished or [])
@@ -64,6 +66,16 @@ class FakeStore:
         # integrity checkpoints (jobs/simulate_chances.py, jobs/ledger_integrity.py).
         self.tournament_chances: list[dict] = [dict(r) for r in (tournament_chances or [])]
         self.ledger_checkpoints: list[dict] = [dict(r) for r in (ledger_checkpoints or [])]
+        # RAMBO wave 2 improvement #5 (migration 0009): the public, opt-in
+        # "Beat the Model" leaderboard -- jobs/compute_leaderboard.py.
+        # ``profiles`` mirrors the real table's method surface (id +
+        # leaderboard_opt_in + leaderboard_display_name); a profile without
+        # "leaderboard_opt_in" set defaults to False (opted out), same as a
+        # fresh signup would read.
+        self.profiles: list[dict] = [dict(p) for p in (profiles or [])]
+        self.leaderboard_standings: list[dict] = [
+            dict(r) for r in (leaderboard_standings or [])
+        ]
         # recorded writes
         self.upserted_leagues: list[dict] = []
         self.upserted_teams: list[dict] = []
@@ -79,6 +91,7 @@ class FakeStore:
         self.snapshot_writes: list[list[dict]] = []
         self.chances_writes: list[list[dict]] = []
         self.checkpoint_writes: list[dict] = []
+        self.replace_leaderboard_standings_calls: list[list[dict]] = []
         # jobs/ledger_integrity.py's Storage surface (mocked -- never a real
         # bucket): ensured_buckets records every ensure_private_backup_bucket
         # call; uploads records every upload in call order (so a re-run's
@@ -354,6 +367,63 @@ class FakeStore:
             existing.update(row)
         else:
             self.pick_aggregates.append(dict(row))
+
+    # ----- RAMBO wave 2 #5 (migration 0009): public opt-in leaderboard ------
+    # Mirrors jobs.db.SupabaseStore's method surface for
+    # jobs/compute_leaderboard.py -- profiles/user_predictions/predictions
+    # stay the SAME in-memory lists every other fake method above already
+    # reads/writes; only leaderboard_standings is new state.
+    def opted_in_leaderboard_users(self):
+        return [
+            {"id": p["id"], "leaderboard_display_name": p.get("leaderboard_display_name")}
+            for p in self.profiles
+            if p.get("leaderboard_opt_in", False)
+        ]
+
+    def scored_user_predictions_for_users(self, user_ids):
+        if not user_ids:
+            return []
+        ids = set(user_ids)
+        return [
+            {
+                "user_id": p["user_id"],
+                "fixture_id": p["fixture_id"],
+                "brier_score": p["brier_score"],
+            }
+            for p in self.user_predictions
+            if p["user_id"] in ids and p.get("scored_at") is not None
+        ]
+
+    def scored_model_brier_for_fixtures(self, fixture_ids, *, source):
+        if not fixture_ids:
+            return {}
+        ids = set(fixture_ids)
+        return {
+            p["fixture_id"]: p["brier_score"]
+            for p in self.predictions
+            if p["source"] == source and p["status"] == "scored" and p["fixture_id"] in ids
+        }
+
+    def replace_leaderboard_standings(self, rows):
+        """Mirrors jobs.db.SupabaseStore.replace_leaderboard_standings:
+        idempotent upsert-then-prune of the WHOLE table, keyed on user_id --
+        any existing row whose user_id isn't in the fresh ``rows`` set is
+        pruned (opted out, or lost its last comparable scored pick)."""
+        self.replace_leaderboard_standings_calls.append([dict(r) for r in rows])
+        keep_ids = {row["user_id"] for row in rows}
+        for row in rows:
+            existing = next(
+                (r for r in self.leaderboard_standings if r["user_id"] == row["user_id"]),
+                None,
+            )
+            if existing is not None:
+                existing.update(row)
+            else:
+                self.leaderboard_standings.append(dict(row))
+        stale = [r for r in self.leaderboard_standings if r["user_id"] not in keep_ids]
+        for r in stale:
+            self.leaderboard_standings.remove(r)
+        return {"upserted": len(rows), "pruned": len(stale)}
 
     # ----- W5 (migration 0006): team_probability_snapshots -----------------
     # Mirrors jobs.db.SupabaseStore for jobs/snapshot_probabilities.py --

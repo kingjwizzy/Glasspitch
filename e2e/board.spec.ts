@@ -91,6 +91,32 @@ test('/board renders a populated snapshot table or the honest empty state', asyn
   }
 });
 
+// ── /board: the share loop (RAMBO wave 2 #2), gated on a REAL record ───────
+// The board itself is in-house Elo context, not a scored call, so what's
+// worth sharing here is the same verifiable ledger record /ledger itself
+// shares — src/app/board/page.tsx reuses the SAME getRecordFigures() read.
+// Only renders once record.count > 0, so this accepts either state exactly
+// like the populated/empty split above.
+test('/board offers the ledger share control once there is a real record to point at, or renders nothing yet', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, 'share', { value: undefined, configurable: true });
+  });
+  await page.goto('/board', { waitUntil: 'load' });
+
+  const shareButton = page.getByRole('button', { name: 'Share' });
+  if ((await shareButton.count()) > 0) {
+    await expect(shareButton).toBeVisible();
+    await shareButton.click();
+    for (const name of ['X', 'Bluesky', 'WhatsApp'] as const) {
+      await expect(page.getByRole('link', { name, exact: true })).toBeVisible();
+    }
+  } else {
+    await expect(shareButton).toHaveCount(0);
+  }
+});
+
 // ── /board/ticker: populated difficulty grid or the honest empty state ─────
 test('/board/ticker renders the difficulty grid or the honest empty state', async ({
   page,

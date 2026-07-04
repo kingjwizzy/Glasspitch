@@ -363,6 +363,76 @@ def test_parse_fixture_without_round_or_winner_keys_stays_null(fixtures_payload)
     assert parsed.winner_api_team_id is None
 
 
+# --- live match clock (migration 0011, UI-overhaul spec item #1) -------------
+# elapsed_minute/elapsed_extra_minute/api_status_short all come straight off
+# the SAME fixture.status node parse_fixture already reads -- no extra
+# parsing, no extra API cost.
+
+
+def _live_item(*, short, elapsed=None, extra=None):
+    return {
+        "fixture": {
+            "id": 9010,
+            "date": "2026-06-11T16:00:00+00:00",
+            "status": {"short": short, "elapsed": elapsed, "extra": extra},
+        },
+        "league": {"id": 1, "name": "World Cup", "country": "World", "season": 2026},
+        "teams": {"home": {"id": 2380, "name": "Brazil"}, "away": {"id": 26, "name": "Argentina"}},
+        "goals": {"home": 1, "away": 0},
+        "score": {"fulltime": {"home": None, "away": None}},
+    }
+
+
+def test_parse_fixture_live_match_carries_the_elapsed_minute():
+    parsed = parse_fixture(_live_item(short="1H", elapsed=34), default_season=2026)
+    assert parsed.status == "live"
+    assert parsed.api_status_short == "1H"
+    assert parsed.elapsed_minute == 34
+    assert parsed.elapsed_extra_minute is None
+
+
+def test_parse_fixture_live_match_carries_stoppage_time_extra_minute():
+    parsed = parse_fixture(_live_item(short="2H", elapsed=90, extra=3), default_season=2026)
+    assert parsed.status == "live"
+    assert parsed.api_status_short == "2H"
+    assert parsed.elapsed_minute == 90
+    assert parsed.elapsed_extra_minute == 3
+
+
+def test_parse_fixture_half_time_has_no_elapsed_minute():
+    # API-Football nulls `elapsed` at half-time -- HT still maps to our
+    # 'live' status, but there is no running minute to show.
+    parsed = parse_fixture(_live_item(short="HT"), default_season=2026)
+    assert parsed.status == "live"
+    assert parsed.api_status_short == "HT"
+    assert parsed.elapsed_minute is None
+    assert parsed.elapsed_extra_minute is None
+
+
+def test_parse_fixture_not_started_has_null_live_clock_fields(fixtures_payload):
+    # The not-yet-live (scheduled) and already-finished items in the shared
+    # fixtures_payload fixture carry no "elapsed"/"extra" keys at all --
+    # exactly the "fetch sweep hasn't touched this fixture since kickoff"
+    # shape the frontend's LivePill renders defensively against.
+    upcoming = parse_fixture(fixtures_payload["response"][0], default_season=2026)
+    finished = parse_fixture(fixtures_payload["response"][1], default_season=2026)
+    for parsed in (upcoming, finished):
+        assert parsed.elapsed_minute is None
+        assert parsed.elapsed_extra_minute is None
+
+
+def test_run_writes_the_live_clock_fields_through_to_the_store(store, make_api):
+    api = make_api(fixtures={"response": [_live_item(short="1H", elapsed=57)]})
+    run(dry_run=False, store=store, api=api)
+
+    assert len(store.upserted_fixtures) == 1
+    written = store.upserted_fixtures[0]
+    assert written["status"] == "live"
+    assert written["status_short"] == "1H"
+    assert written["elapsed_minute"] == 57
+    assert written["elapsed_extra_minute"] is None
+
+
 def test_run_wires_round_and_winner_team_id_into_the_fixture_upsert(store, make_api):
     api = make_api(fixtures={"response": [_penalty_shootout_item()]})
 
