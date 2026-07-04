@@ -55,3 +55,6 @@ yarn-error.log*
 # --- local scratch / preview artifacts (never committed) ---
 .scratch/
 .env*
+
+# --- private owner runbook (contains live dashboard IDs; personal, NEVER commit) ---
+/docs/GO-LIVE-OWNER-CHECKLIST.md
