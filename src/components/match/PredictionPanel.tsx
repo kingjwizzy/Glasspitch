@@ -2,7 +2,7 @@ import ProbabilityBar from '@/components/ProbabilityBar';
 import LockStatusLine from '@/components/LockStatusLine';
 import AuditLine from '@/components/match/AuditLine';
 import { LockOpenIcon } from '@/components/icons';
-import { scoreLine } from '@/lib/format';
+import { favoured, scoreLine } from '@/lib/format';
 import { THIRD_PARTY_LABEL } from '@/lib/constants';
 import type { MatchPrediction } from '@/lib/queries/match';
 import type { FixtureStatus } from '@/lib/types';
@@ -83,6 +83,13 @@ export default function PredictionPanel({
         away={prediction.prob_away}
         homeLabel={home}
         awayLabel={away}
+        favoured={
+          favoured({
+            home: prediction.prob_home,
+            draw: prediction.prob_draw,
+            away: prediction.prob_away,
+          }).key
+        }
       />
 
       <LockStatusLine status={prediction.status} className="mt-4" />

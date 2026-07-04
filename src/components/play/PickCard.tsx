@@ -186,7 +186,12 @@ export default function PickCard({
         })}
       </div>
 
-      {/* The pick as numbers — always printed, always totalling 100. */}
+      {/* The pick as numbers — always printed, always totalling 100. `animated`
+          (RAMBO wave 3 #9b) glides each segment's width so quick-pick presets
+          and slider drags rebalance smoothly instead of snapping — this is
+          the one bar on the site where that matters, since it's the only one
+          whose width changes after first paint. Killed by the global
+          prefers-reduced-motion rule regardless (globals.css). */}
       {touched && (
         <div className="mt-3">
           <ProbabilityBar
@@ -194,6 +199,7 @@ export default function PickCard({
             home={values[0] / 100}
             draw={values[1] / 100}
             away={values[2] / 100}
+            animated
           />
         </div>
       )}

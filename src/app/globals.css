@@ -120,6 +120,14 @@ body {
   font-feature-settings: "tnum";
 }
 
+/* Recessed meter track for ProbabilityBar (RAMBO wave 3 #4a): seats the H/D/A
+   segments in a filled bg-surface-2 groove so the stacked bar reads as one
+   meter rather than floating chips over whatever surface it sits on — the
+   2px inter-segment gaps show this colour instead of raw card background. */
+.prob-track {
+  background: var(--surface-2);
+}
+
 /* Visible keyboard focus on every interactive element (DESIGN.md §7 floor). */
 :focus-visible {
   outline: 2px solid var(--green-bright);

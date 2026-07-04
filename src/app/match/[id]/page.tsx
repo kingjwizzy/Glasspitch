@@ -235,6 +235,9 @@ export default async function MatchPage({ params }: MatchPageProps) {
         status={data.status}
         finalHome={data.final_home_goals}
         finalAway={data.final_away_goals}
+        statusShort={data.status_short}
+        elapsedMinute={data.elapsed_minute}
+        elapsedExtraMinute={data.elapsed_extra_minute}
       />
 
       {/* Reserved ad slot — built-ready but renders nothing in v1 (§4, §13). */}

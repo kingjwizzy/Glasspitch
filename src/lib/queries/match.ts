@@ -73,6 +73,12 @@ export interface MatchData {
   awaySlug: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  /** Live-match clock columns (RAMBO wave 3 #1) — nullable until the fetch
+   *  sweep has touched this fixture since kickoff; render defensively
+   *  (`lib/format.ts`'s `liveMinuteLabel()`). Feeds MatchHeader's LivePill. */
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   /** The third-party prediction, or null when none is published OR it was
    *  voided (a voided prediction is NEVER presented as our call — §9, §10). */
   prediction: MatchPrediction | null;
@@ -96,6 +102,7 @@ const FORM_LIMIT = 5;
 // nulling the embed.
 const MATCH_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
+  status_short, elapsed_minute, elapsed_extra_minute,
   home_team_id, away_team_id,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
@@ -144,6 +151,9 @@ interface RawMatchFixture {
   status: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   home_team_id: number;
   away_team_id: number;
   home_team: RawTeam | RawTeam[] | null;
@@ -279,6 +289,9 @@ async function load(id: number): Promise<MatchData | null> {
     awaySlug: away?.slug ?? '',
     final_home_goals: fixture.final_home_goals,
     final_away_goals: fixture.final_away_goals,
+    status_short: fixture.status_short,
+    elapsed_minute: fixture.elapsed_minute,
+    elapsed_extra_minute: fixture.elapsed_extra_minute,
     prediction,
     predictionVoided,
     homeForm,

@@ -10,11 +10,20 @@
 //  - `hero`   — 12px bar only; the display-scale probability trio rendered
 //               directly above it by FeaturedMatch carries the printed labels,
 //               and the bar keeps the full accessible label.
-//  - `row`    — 6px bar + an 11px mono "H 54 · D 26 · A 20" line, labels always
+//  - `row`    — 8px bar + an 11px mono "H 54 · D 26 · A 20" line, labels always
 //               printed (fixture rows / receipts).
 //  - `compact`— legacy boolean: bar only (kept for existing callers).
+//
+// RAMBO wave 3 #4: every variant's segments now sit in a `.prob-track`
+// (bg-surface-2, globals.css) recessed groove so the stacked bar reads as one
+// filled meter rather than floating chips; an optional `favoured` prop lets a
+// caller bold the model's leaning outcome (row legend / legend dl) while the
+// other two stay dim — every existing caller that omits it keeps its exact
+// prior appearance. #9b: an opt-in `animated` prop glides segment widths for
+// PickCard's live pick bar only; every other caller stays snap-rendered.
 
 import { pct, pctFigure } from '@/lib/format';
+import type { MatchResult } from '@/lib/types';
 
 export type ProbabilityBarVariant = 'legend' | 'hero' | 'row';
 
@@ -50,6 +59,22 @@ export interface ProbabilityBarProps {
   /** See `ProbabilityBarSemantics`. Defaults to `'prediction'`, which
    *  preserves the accessible name every existing caller already gets. */
   semantics?: ProbabilityBarSemantics;
+  /** The model's leaning outcome (RAMBO wave 3 #4b) — when given, the `row`
+   *  variant's printed mono legend and the `legend` variant's per-outcome
+   *  figures render that segment at `font-medium text-fg` while the other two
+   *  stay `text-fg-dim`, so a returning fan can scan a list and read each
+   *  call's lean at a glance. Omit to keep every existing caller's current,
+   *  unweighted appearance exactly as-is (every outcome at equal weight). All
+   *  three percentages stay printed either way (§1 honesty — colour/weight is
+   *  never the only signal). */
+  favoured?: MatchResult;
+  /** Opt-in width transition on each segment (RAMBO wave 3 #9b), default OFF
+   *  so every server-rendered bar on public pages stays pixel-identical.
+   *  Intended ONLY for PickCard's live quick-pick/slider bar, where the
+   *  segments visibly rebalance — a snap there reads as broken, not calm. The
+   *  global `prefers-reduced-motion: reduce` kill-switch (globals.css) forces
+   *  the transition duration to ~0 regardless of this prop. */
+  animated?: boolean;
 }
 
 const SEGMENTS = [
@@ -61,7 +86,9 @@ const SEGMENTS = [
 const BAR_HEIGHT: Record<ProbabilityBarVariant, string> = {
   legend: 'h-2.5',
   hero: 'h-3',
-  row: 'h-1.5',
+  // RAMBO wave 3 #4a: 6px → 8px — the old height left small segments reading
+  // as slivers even seated in the new recessed track.
+  row: 'h-2',
 };
 
 export default function ProbabilityBar({
@@ -74,6 +101,8 @@ export default function ProbabilityBar({
   homeLabel,
   awayLabel,
   semantics = 'prediction',
+  favoured,
+  animated = false,
 }: ProbabilityBarProps) {
   const values: Record<(typeof SEGMENTS)[number]['key'], number> = {
     home,
@@ -101,14 +130,16 @@ export default function ProbabilityBar({
   return (
     <div className={className}>
       <div
-        className={`flex ${BAR_HEIGHT[variant]} w-full gap-0.5 overflow-hidden rounded-full`}
+        className={`prob-track flex ${BAR_HEIGHT[variant]} w-full gap-0.5 overflow-hidden rounded-full`}
         role="img"
         aria-label={accessibleName}
       >
         {SEGMENTS.map((s) => (
           <div
             key={s.key}
-            className={`${s.bar} h-full first:rounded-l-full last:rounded-r-full`}
+            className={`${s.bar} h-full first:rounded-l-full last:rounded-r-full ${
+              animated ? 'transition-[width] duration-300 ease-out' : ''
+            }`}
             style={{
               width: `${(values[s.key] / total) * 100}%`,
               // A true 0% outcome renders no sliver — the bar must parse
@@ -121,13 +152,19 @@ export default function ProbabilityBar({
       </div>
 
       {/* Row variant: labels always printed as one aligned mono line. Duplicate
-          of the bar's accessible label, so hidden from the tree. */}
+          of the bar's accessible label, so hidden from the tree. Each segment
+          is its own span so the favoured outcome (if given) can render at
+          font-medium text-fg while the rest stay text-fg-dim (RAMBO wave 3
+          #4b) — omitting `favoured` keeps every span at the inherited
+          text-fg-dim, i.e. today's unweighted appearance, unchanged. */}
       {variant === 'row' && (
-        <p
-          aria-hidden="true"
-          className="mt-1 font-mono text-micro text-fg-dim"
-        >
-          H {pctFigure(home)} · D {pctFigure(draw)} · A {pctFigure(away)}
+        <p aria-hidden="true" className="mt-1 font-mono text-micro text-fg-dim">
+          {SEGMENTS.map((s, i) => (
+            <span key={s.key} className={favoured === s.key ? 'font-medium text-fg' : undefined}>
+              {s.letter} {pctFigure(values[s.key])}
+              {i < SEGMENTS.length - 1 ? ' · ' : ''}
+            </span>
+          ))}
         </p>
       )}
 
@@ -141,6 +178,14 @@ export default function ProbabilityBar({
               s.key === 'home' ? (homeLabel ?? s.label)
               : s.key === 'away' ? (awayLabel ?? s.label)
               : s.label;
+            // Favoured emphasis (RAMBO wave 3 #4b): only kicks in once a
+            // caller passes `favoured` — every existing legend caller that
+            // doesn't keeps today's uniform font-medium text-fg on all three.
+            const ddCls = favoured
+              ? favoured === s.key
+                ? 'font-medium text-fg'
+                : 'text-fg-dim'
+              : 'font-medium text-fg';
             return (
               <div key={s.key} className="flex min-w-0 flex-col items-center gap-1">
                 <dt className="flex min-w-0 items-center gap-1.5 text-xs text-fg-dim">
@@ -152,9 +197,7 @@ export default function ProbabilityBar({
                   </span>
                   <span className="truncate">{outcomeText}</span>
                 </dt>
-                <dd className="font-mono text-sm font-medium text-fg">
-                  {pct(values[s.key])}
-                </dd>
+                <dd className={`font-mono text-sm ${ddCls}`}>{pct(values[s.key])}</dd>
               </div>
             );
           })}

@@ -30,6 +30,12 @@ export interface FixtureRowView {
   awaySlug: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  /** Live-match clock columns (RAMBO wave 3 #1) — nullable until the fetch
+   *  sweep has touched this fixture since kickoff; render defensively
+   *  (`lib/format.ts`'s `liveMinuteLabel()`). */
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   /** The third-party displayed prediction, or null when none exists or it was
    *  voided (unlocked_void / void_cancelled). `brier_score` is present once
    *  `status='scored'`. */
@@ -63,6 +69,7 @@ export interface FixtureRowView {
 // instead of merely nulling the embed (§5 season guard).
 export const FIXTURE_ROW_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
+  status_short, elapsed_minute, elapsed_extra_minute,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
   league:leagues!fixtures_league_id_fkey!inner(name, slug, season),
@@ -102,6 +109,9 @@ export interface RawFixtureRow {
   status: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   home_team: RawTeam | RawTeam[] | null;
   away_team: RawTeam | RawTeam[] | null;
   league: RawLeague | RawLeague[] | null;
@@ -184,6 +194,9 @@ export function mapFixtureRow(raw: RawFixtureRow): FixtureRowView {
     awaySlug: away?.slug ?? '',
     final_home_goals: raw.final_home_goals,
     final_away_goals: raw.final_away_goals,
+    status_short: raw.status_short,
+    elapsed_minute: raw.elapsed_minute,
+    elapsed_extra_minute: raw.elapsed_extra_minute,
     prediction,
     actualResult,
     pick,

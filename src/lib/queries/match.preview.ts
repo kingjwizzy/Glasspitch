@@ -100,6 +100,12 @@ function build(s: Spec): MatchData {
     awaySlug: s.away.toLowerCase().replace(/\s+/g, '-'),
     final_home_goals: final ? final[0] : null,
     final_away_goals: final ? final[1] : null,
+    // Deliberately null in every preview spec — including the id=5 LIVE
+    // fixture — so the suite exercises the defensive "no minute yet, fall
+    // back to plain Live" path rather than masking it with fabricated data.
+    status_short: null,
+    elapsed_minute: null,
+    elapsed_extra_minute: null,
     prediction,
     predictionVoided: Boolean(s.voided),
     homeForm: s.homeForm,

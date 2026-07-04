@@ -42,6 +42,13 @@ export interface FixtureView {
   awaySlug: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  /** Live-match clock columns (RAMBO wave 3 #1) — nullable until the fetch
+   *  sweep has touched this fixture since kickoff; render defensively
+   *  (`lib/format.ts`'s `liveMinuteLabel()`), never assume they're populated
+   *  just because `status === 'live'`. */
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   /** The displayed third-party prediction, if one exists yet. */
   prediction: PredictionView | null;
 }
@@ -130,6 +137,9 @@ interface RawFixture {
   status: string;
   final_home_goals: number | null;
   final_away_goals: number | null;
+  status_short: string | null;
+  elapsed_minute: number | null;
+  elapsed_extra_minute: number | null;
   home_team: RawTeam | RawTeam[] | null;
   away_team: RawTeam | RawTeam[] | null;
   league: RawLeague | RawLeague[] | null;
@@ -163,6 +173,7 @@ interface RawScoredFixture {
 // merely nulling the embed (§5 season guard).
 const FIXTURE_SELECT = `
   id, kickoff_utc, status, final_home_goals, final_away_goals,
+  status_short, elapsed_minute, elapsed_extra_minute,
   home_team:teams!fixtures_home_team_id_fkey(name, slug),
   away_team:teams!fixtures_away_team_id_fkey(name, slug),
   league:leagues!fixtures_league_id_fkey!inner(name, season),
@@ -203,6 +214,9 @@ function mapFixture(r: RawFixture): FixtureView {
     awaySlug: away?.slug ?? '',
     final_home_goals: r.final_home_goals,
     final_away_goals: r.final_away_goals,
+    status_short: r.status_short,
+    elapsed_minute: r.elapsed_minute,
+    elapsed_extra_minute: r.elapsed_extra_minute,
     prediction: pred
       ? {
           prob_home: pred.prob_home,

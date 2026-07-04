@@ -221,6 +221,36 @@ export function formatDateShort(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : DATE_FMT.format(d);
 }
 
+// ── Matchday liveness — the live minute (RAMBO wave 3 #1) ──────────────────
+
+/** The three fixture columns the live clock is derived from — nullable
+ *  because the fetch sweep populates them only for fixtures it has touched
+ *  since the columns were added; an older/just-flipped-live row can be `null`
+ *  until the next run. Callers must gate on `status === 'live'` themselves —
+ *  this helper trusts its inputs unconditionally. */
+export interface LiveClock {
+  statusShort: string | null;
+  elapsedMinute: number | null;
+  elapsedExtraMinute: number | null;
+}
+
+/**
+ * Render recipe for a live match clock (DESIGN.md §4 item 1: "a LIVE badge +
+ * minute"): `"HT"` at half time; else the elapsed minute with any added time
+ * printed as `67'` / `90+2'`; else `null` so the caller falls back to its
+ * existing plain "Live" label. Never returns an empty string or the literal
+ * text `"null"` — a fixture the fetch sweep hasn't touched yet degrades to
+ * that honest fallback rather than a broken-looking badge.
+ */
+export function liveMinuteLabel(clock: LiveClock): string | null {
+  if (clock.statusShort === 'HT') return 'HT';
+  if (clock.elapsedMinute != null) {
+    const extra = clock.elapsedExtraMinute ? `+${clock.elapsedExtraMinute}` : '';
+    return `${clock.elapsedMinute}${extra}'`;
+  }
+  return null;
+}
+
 /** The single most likely outcome and its probability. */
 export function favoured(p: Probs): { key: MatchResult; prob: number } {
   const entries: Array<[MatchResult, number]> = [

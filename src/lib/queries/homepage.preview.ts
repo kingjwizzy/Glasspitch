@@ -56,6 +56,12 @@ function fixture(
     awaySlug: away.toLowerCase().replace(/\s+/g, '-'),
     final_home_goals: finalScore ? finalScore[0] : null,
     final_away_goals: finalScore ? finalScore[1] : null,
+    // Deliberately null (including the 'live' variant's hero) so preview
+    // rendering exercises the defensive "no minute yet" fallback rather than
+    // masking it with fabricated data — see match.preview.ts's identical note.
+    status_short: null,
+    elapsed_minute: null,
+    elapsed_extra_minute: null,
     prediction: {
       prob_home: probs[0],
       prob_draw: probs[1],

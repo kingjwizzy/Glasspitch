@@ -6,6 +6,7 @@ import {
   favoured,
   formatDateTimeShort,
   kickoffPhrase,
+  liveMinuteLabel,
   pct,
   scoreLine,
 } from '@/lib/format';
@@ -51,6 +52,16 @@ export default function FeaturedMatch({
   const pred = fixture.prediction;
   const hasLiveScore =
     isLive && fixture.final_home_goals !== null && fixture.final_away_goals !== null;
+  // Live minute (RAMBO wave 3 #1) — only trusted while isLive; a fixture the
+  // fetch sweep hasn't touched since kickoff renders null here, and LivePill
+  // falls back to its plain "Live" label rather than a blank/"null'" clock.
+  const liveMinute = isLive
+    ? liveMinuteLabel({
+        statusShort: fixture.status_short,
+        elapsedMinute: fixture.elapsed_minute,
+        elapsedExtraMinute: fixture.elapsed_extra_minute,
+      })
+    : null;
   const fav = pred
     ? favoured({ home: pred.prob_home, draw: pred.prob_draw, away: pred.prob_away })
     : null;
@@ -91,7 +102,7 @@ export default function FeaturedMatch({
       <div className="mt-4 flex min-h-11 items-center gap-3">
         {isLive ? (
           <>
-            <LivePill />
+            <LivePill minute={liveMinute} />
             {hasLiveScore && (
               <span className="font-mono text-stat font-medium text-fg">
                 {scoreLine(fixture.final_home_goals!, fixture.final_away_goals!)}

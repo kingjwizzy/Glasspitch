@@ -2,7 +2,7 @@ import Link from 'next/link';
 import LivePill from '@/components/LivePill';
 import TeamFlag from '@/components/TeamFlag';
 import MatchAtmosphere from '@/components/art/MatchAtmosphere';
-import { formatKickoff, scoreLine } from '@/lib/format';
+import { formatKickoff, liveMinuteLabel, scoreLine } from '@/lib/format';
 import type { FixtureStatus } from '@/lib/types';
 
 // The match header — the focal point of the page (DESIGN.md §4). Competition +
@@ -48,8 +48,24 @@ function CompetitionName({ name, slug }: { name: string; slug: string }) {
   );
 }
 
-function StatusPill({ status }: { status: FixtureStatus }) {
-  if (status === 'live') return <LivePill />;
+function StatusPill({
+  status,
+  statusShort,
+  elapsedMinute,
+  elapsedExtraMinute,
+}: {
+  status: FixtureStatus;
+  statusShort: string | null;
+  elapsedMinute: number | null;
+  elapsedExtraMinute: number | null;
+}) {
+  if (status === 'live') {
+    // RAMBO wave 3 #1 — only trusted while status === 'live'; render
+    // defensively, a fixture the fetch sweep hasn't touched yet falls back to
+    // LivePill's own plain "Live" label.
+    const minute = liveMinuteLabel({ statusShort, elapsedMinute, elapsedExtraMinute });
+    return <LivePill minute={minute} />;
+  }
   const label =
     status === 'finished'
       ? 'Full time'
@@ -74,6 +90,11 @@ export interface MatchHeaderProps {
   status: FixtureStatus;
   finalHome: number | null;
   finalAway: number | null;
+  /** Live-match clock columns (RAMBO wave 3 #1) — nullable until the fetch
+   *  sweep has touched this fixture since kickoff; render defensively. */
+  statusShort: string | null;
+  elapsedMinute: number | null;
+  elapsedExtraMinute: number | null;
 }
 
 export default function MatchHeader({
@@ -87,6 +108,9 @@ export default function MatchHeader({
   status,
   finalHome,
   finalAway,
+  statusShort,
+  elapsedMinute,
+  elapsedExtraMinute,
 }: MatchHeaderProps) {
   const hasScore =
     (status === 'finished' || status === 'live') &&
@@ -103,7 +127,12 @@ export default function MatchHeader({
       <MatchAtmosphere />
       <div className="flex items-center justify-between gap-3">
         {league ? <CompetitionName name={league} slug={leagueSlug} /> : <span />}
-        <StatusPill status={status} />
+        <StatusPill
+          status={status}
+          statusShort={statusShort}
+          elapsedMinute={elapsedMinute}
+          elapsedExtraMinute={elapsedExtraMinute}
+        />
       </div>
 
       <h1 className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3 font-display text-xl font-semibold tracking-tight text-fg sm:text-2xl">

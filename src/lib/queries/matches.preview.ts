@@ -102,6 +102,12 @@ function fixture(
     awaySlug,
     final_home_goals: finals ? finals[0] : null,
     final_away_goals: finals ? finals[1] : null,
+    // This preview builder never produces a 'live' fixture, so these are
+    // always null — see match.preview.ts's identical note on why that's
+    // deliberate rather than a gap.
+    status_short: null,
+    elapsed_minute: null,
+    elapsed_extra_minute: null,
     prediction,
     actualResult,
     pick,
