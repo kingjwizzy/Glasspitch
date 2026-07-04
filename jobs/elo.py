@@ -21,6 +21,7 @@ All functions are pure and standard-library only so the maths is easy to verify.
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 # --- Tunable constants (documented defaults) ---------------------------------
 DEFAULT_RATING: float = 1500.0
@@ -223,6 +224,7 @@ def ratings_from_results(
     default: float = DEFAULT_RATING,
     k: float = K_FACTOR,
     home_advantage: float = HOME_ADVANTAGE,
+    initial_ratings: Optional[dict] = None,
 ) -> dict:
     """Derive current team ratings by replaying finished matches in order.
 
@@ -232,11 +234,28 @@ def ratings_from_results(
     "cold-start from a default rating" the in-house Elo uses while it is
     logged-only (ARCHITECTURE.md §9). No separate ratings table is required:
     ratings are recomputed from the fixtures history each run.
+
+    ``initial_ratings`` (optional) is a ``team_id -> rating`` map of
+    PRE-TOURNAMENT priors (e.g. jobs/seed_ratings.py's static, hand-maintained
+    strength table) that a team starts from INSTEAD OF ``default`` the first
+    time it's seen here. This exists because a handful of group-stage results
+    is not enough signal to tell an elite side from a mid-table host when
+    every team cold-starts at the SAME ``default`` (this was the root cause of
+    a host nation outranking elite sides in jobs/simulate_chances.py's World
+    Cup Chances simulation — see that module's docstring). Omitted / ``None``
+    behaves exactly as before this parameter existed: every team cold-starts
+    at ``default``. A team present in ``initial_ratings`` but absent from
+    every result in ``results`` is still absent from the RETURNED dict (same
+    "only teams that have played are keys" convention as always) — callers
+    that need a seed to apply even with zero replayed history should merge
+    ``initial_ratings`` in themselves (see
+    ``jobs.simulate_chances._derived_ratings``).
     """
     ratings: dict = {}
+    seeds = initial_ratings or {}
     for home_id, away_id, home_goals, away_goals in results:
-        home_rating = ratings.get(home_id, default)
-        away_rating = ratings.get(away_id, default)
+        home_rating = ratings.get(home_id, seeds.get(home_id, default))
+        away_rating = ratings.get(away_id, seeds.get(away_id, default))
         new_home, new_away = update_ratings(
             home_rating, away_rating, home_goals, away_goals,
             k=k, home_advantage=home_advantage,

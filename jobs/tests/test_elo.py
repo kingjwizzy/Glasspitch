@@ -228,3 +228,48 @@ def test_ratings_from_results_unseen_team_defaults():
     assert 3 not in ratings  # a team that never played is simply absent
     # callers fall back to DEFAULT_RATING for absent teams
     assert ratings.get(3, DEFAULT_RATING) == DEFAULT_RATING
+
+
+# --- ratings_from_results(initial_ratings=...) (v3: pre-tournament seeding) --
+
+
+def test_ratings_from_results_initial_ratings_omitted_matches_unseeded_default():
+    # Omitted (or explicitly None) initial_ratings must reproduce EXACTLY the
+    # pre-existing cold-start-from-`default` behaviour -- the parameter is
+    # additive, never a change to the unseeded path.
+    results = [(1, 2, 2, 0), (3, 1, 1, 1)]
+    assert ratings_from_results(results) == ratings_from_results(
+        results, initial_ratings=None
+    )
+
+
+def test_ratings_from_results_seeds_a_teams_first_appearance_instead_of_default():
+    # Team 1 is seeded well above DEFAULT_RATING; team 2 is unseeded and cold
+    # starts at DEFAULT_RATING as before. A single DRAWN result (no signal in
+    # either direction) should still leave team 1 rated clearly above team 2
+    # -- something a shared DEFAULT_RATING cold start could never encode.
+    ratings = ratings_from_results([(1, 2, 1, 1)], initial_ratings={1: 2000.0})
+    assert ratings[1] > ratings[2]
+    assert ratings[2] == pytest.approx(DEFAULT_RATING, abs=50)  # barely moved off default
+
+
+def test_ratings_from_results_seeded_team_ends_higher_than_the_same_team_unseeded():
+    # The root-cause regression this parameter fixes (jobs/simulate_chances.py
+    # docstring, "Why Elo, seeded"): replaying the SAME handful of results,
+    # a team that started from a real pre-tournament seed ends up rated
+    # higher than the identical team replayed with no seed at all.
+    results = [(1, 2, 1, 1), (2, 1, 0, 0), (1, 3, 2, 1)]
+    unseeded = ratings_from_results(results)
+    seeded = ratings_from_results(results, initial_ratings={1: 2000.0})
+    assert seeded[1] > unseeded[1]
+
+
+def test_ratings_from_results_seed_for_a_team_absent_from_every_result_is_not_returned():
+    # A team present in initial_ratings but that never actually appears in
+    # `results` stays absent from the RETURNED dict -- same "only teams that
+    # have played are keys" convention `ratings_from_results` always had.
+    ratings = ratings_from_results(
+        [(1, 2, 1, 0)], initial_ratings={1: 2000.0, 9: 1800.0}
+    )
+    assert 9 not in ratings
+    assert 1 in ratings and 2 in ratings

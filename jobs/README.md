@@ -20,7 +20,8 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `db.py` | Supabase **secret-key** client + `SupabaseStore` (idempotent upserts keyed on `api_*` ids; the only writer; every list read is paginated past PostgREST's 1000-row cap). |
 | `util.py` | `slugify`, UTC datetime helpers. |
 | `scoring.py` | Multiclass Brier score + clipped log loss (§10). |
-| `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9); v3 W5 adds `expected_goals`/`clean_sheet_probability`/`team_snapshot_metrics` (Poisson clean-sheet + continuous expected-goals estimates for `snapshot_probabilities.py`). |
+| `elo.py` | In-house team-rating Elo baseline + `ratings_from_results` replay (§9); v3 W5 adds `expected_goals`/`clean_sheet_probability`/`team_snapshot_metrics` (Poisson clean-sheet + continuous expected-goals estimates for `snapshot_probabilities.py`). `ratings_from_results` takes an optional `initial_ratings` map so a replay can start teams from a pre-tournament prior instead of a shared cold-start default (see `seed_ratings.py`). |
+| `seed_ratings.py` | **v3 W7 hardening.** Static, in-repo (NOT API-fetched) pre-tournament Elo priors per team, keyed by the stable API-Football `api_team_id`. Fixes a diagnosed bug where every team cold-started at the same Elo default, so 2-3 replayed group games couldn't tell an elite side from a mid-table host — used ONLY to seed `simulate_chances.py`'s own replay, never the publicly displayed prediction (§9). |
 | `fetch_fixtures.py` | **Daily.** Upsert leagues/teams/fixtures keyed on `api_fixture_id`, one tracked league at a time (§8.1). Also normalises + stores each fixture's `round`/`api_round` and its `winner_team_id` (migration 0007) — see below. |
 | `fetch_predictions.py` | **Daily.** One `/predictions` fetch per fixture within a kickoff window (once, ever) + logged Elo (§8.2, §9). Also stores a curated `fixture_insights` (`kind='prediction_detail'`) row from that SAME response for a newly-fetched prediction (v2 §4/§7, migration 0004) — never a second call. |
 | `lock_predictions.py` | **Frequent.** Lock at kickoff; `unlocked_void` for late predictions (§8.3, §10). |
@@ -29,7 +30,7 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
 | `fetch_topscorers.py` | **New (daily, e.g. 07:30 UTC).** One `/players/topscorers` fetch per tracked league; top 15 by rank, idempotent full-replace into `top_scorers` (migration 0005). **Public** data — same access class as `leagues`/`teams`/`fixtures`, not premium. |
 | `score_user_predictions.py` | **v3 W5, new (every ~20 min).** DB-only, no API call. Scores locked "Beat the Model" user picks (`user_predictions`) via the same `scoring.brier_score` as the ledger, service-role-only; also publishes `fixture_pick_aggregates` (crowd-vs-model, no PII) for any newly-locked fixture with picks (migration 0006, ARCHITECTURE.md v3 §5). |
 | `snapshot_probabilities.py` | **v3 W5, new (nightly, e.g. 05:45 UTC).** DB-only, no API call. Per-team Elo-derived win/draw/loss, clean-sheet, and expected-goals snapshots for upcoming fixtures + day-over-day deltas, into `team_probability_snapshots` (migration 0006). **Public** data — powers the free Gameweek Board / Fixture Ticker, same access class as `top_scorers`. |
-| `simulate_chances.py` | **v3 W7, new ("World Cup Chances", 06:30 + 22:15 UTC).** DB-only, no API call. Monte Carlo simulation (`config.MONTE_CARLO_SIMS`, default 10,000) of the remaining knockout bracket (`config.KNOCKOUT_ROUND_ORDER`), writing one `tournament_chances` row per surviving team per day (migration 0007, ROADMAP.md §4 item 7). **Public** data, same access class as `top_scorers`. |
+| `simulate_chances.py` | **v3 W7, new ("World Cup Chances", 06:30 + 22:15 UTC).** DB-only, no API call. Monte Carlo simulation (`config.MONTE_CARLO_SIMS`, default 10,000) of the remaining knockout bracket (`config.KNOCKOUT_ROUND_ORDER`), writing one `tournament_chances` row per surviving team per day (migration 0007, ROADMAP.md §4 item 7). **Public** data, same access class as `top_scorers`. Prices every not-yet-decided match from its own `seed_ratings.py`-seeded Elo only — deliberately does NOT consult a fixture's stored third-party prediction (see the module docstring's "Why Elo, seeded" for the diagnosed host-nation-outranks-elites bug this fixes). |
 | `ledger_integrity.py` | **v3, new ("Ledger integrity ops", nightly 03:30 UTC).** DB + Supabase Storage only, no API call. Nightly private full-table backup export (bucket `config.LEDGER_BACKUPS_BUCKET`, get-or-create + verified non-public every run) + a publicly-verifiable SHA-256 hash chain over the scored ledger, upserted into `ledger_checkpoints` (migration 0007, ROADMAP.md §4 item 5). |
 | `cli.py` | Shared `--dry-run`/`-v` CLI wrapper; always logs a summary (even on a crash) and writes a `job_runs` row for every LIVE run (migration 0003). |
 | `reset_season.py` / `seed_predictions_dev.py` | Dev-only tooling (§ below); season-scoped, live-season interlocked. |
@@ -140,8 +141,12 @@ Run jobs as modules **from the repo root**, e.g. `python -m jobs.fetch_fixtures`
   pass: an already-`finished` fixture uses its TRUE outcome
   (`fixtures.winner_team_id`, migration 0007 — correctly captures a match
   decided by extra time/penalties, unlike the final score alone); a
-  not-yet-played KNOWN fixture samples from its stored `api-football`
-  prediction if one exists, else this job's own Elo-derived probability; a
+  not-yet-played KNOWN fixture samples from this job's own
+  `seed_ratings.py`-seeded Elo probability ONLY — it deliberately never
+  consults a fixture's stored `api-football` prediction (see the module
+  docstring's "Why Elo, seeded" for the diagnosed bug this fixes: a
+  prior-less Elo replay plus API-Football's coarse, home-biased `percent`
+  buckets used to rank host Mexico above elite sides like England); a
   round-slot the data provider hasn't published yet is filled in by pairing
   that round's un-paired survivors ourselves, in kickoff order (a documented
   approximation of the true FIFA bracket — see the module docstring's

@@ -12,13 +12,27 @@ The hand-built brackets below start at 'Quarter-finals' -- config.
 KNOCKOUT_ROUND_ORDER's earlier rounds ('Round of 32'/'Round of 16') simply
 have no fixtures, which run_trial must treat as empty rounds, exactly like a
 real tournament whose earlier rounds use a different competition format.
+
+v3 note: this job no longer reads any fixture's stored third-party
+prediction at all (see jobs/simulate_chances.py's module docstring, "Why
+Elo, seeded -- not the stored third-party prediction") -- pricing is Elo-only
+now, seeded from jobs/seed_ratings.py. Tests that need a DETERMINISTIC
+outcome therefore force it with an enormous Elo rating gap (see
+``_extreme_ratings_for_full_bracket``/``_extreme_ratings_for_scheduled_qfs``
+below) -- large enough that ``elo.expected_score`` underflows to an exact
+1.0/0.0 in double precision (a gap of ~6.4k+ rating points is already enough;
+these use 100k+ for headroom) -- rather than the old degenerate
+home-certain stored prediction. Tests that exercise ``run()`` end-to-end
+(rather than ``run_trial``/``_match_probs`` directly, which already accept a
+``ratings=`` override) monkeypatch ``simulate_chances._derived_ratings`` to
+inject that forced ratings dict.
 """
 
 import random
 
 import pytest
 
-from jobs import config, elo, util
+from jobs import config, elo, seed_ratings, simulate_chances, util
 from jobs.simulate_chances import (
     _match_probs,
     _round_matches,
@@ -72,18 +86,34 @@ def _bracket_fixture(
     }
 
 
-def _home_certain_prediction(fixture_id):
-    """A stored api-football prediction giving the HOME side p=1.0 -- the
-    degenerate certainty the Monte Carlo must respect in every trial."""
+def _extreme_ratings_for_full_bracket():
+    """Ratings dict forcing team 1 to win EVERY match of the 8-team bracket
+    built by ``_full_deterministic_bracket`` -- team 1 over 2 and 3 and 5;
+    team 3 over 4; team 5 over 6 and 7; team 7 over 8 -- via Elo gaps
+    (20,000+ rating points between any two teams that ever meet) enormous
+    enough that ``elo.expected_score`` underflows to an exact 1.0/0.0 in
+    double precision (a gap of ~6.4k+ rating points is already enough for
+    that; these use 20k+ for headroom), regardless of the rng seed or of
+    HOME_ADVANTAGE. This replaces the old degenerate home-certain STORED
+    PREDICTION for the same purpose, now that the job no longer reads stored
+    predictions at all. Deliberately NOT larger than this: ``expected_score``
+    computes ``10.0 ** (gap / 400)``, which OVERFLOWS for a gap much above
+    ~120k rating points, and an unrated (synthetic-match leftover) team
+    defaults to ``elo.DEFAULT_RATING`` (1500) -- every gap here stays
+    comfortably inside both bounds."""
     return {
-        "id": f"pred-{fixture_id}",
-        "fixture_id": fixture_id,
-        "source": "api-football",
-        "status": "published",
-        "prob_home": 1.0,
-        "prob_draw": 0.0,
-        "prob_away": 0.0,
+        1: 80_000.0, 3: 60_000.0, 5: 40_000.0, 7: 20_000.0,
+        2: 0.0, 4: 0.0, 6: 0.0, 8: 0.0,
     }
+
+
+def _extreme_ratings_for_scheduled_qfs():
+    """Ratings forcing a deterministic winner (3, 5, 7) for the three still-
+    SCHEDULED Quarter-finals in test_finished_shootout_...  QF1 (1 v 2) is
+    already ``finished`` and needs no pricing at all -- it's resolved from
+    ``winner_team_id``, never sampled. Same magnitude/overflow reasoning as
+    ``_extreme_ratings_for_full_bracket`` above."""
+    return {3: 60_000.0, 5: 40_000.0, 7: 20_000.0, 4: 0.0, 6: 0.0, 8: 0.0}
 
 
 def _quarter_finals(status="scheduled"):
@@ -110,11 +140,11 @@ def _quarter_finals(status="scheduled"):
 
 
 def _full_deterministic_bracket():
-    """The full 8-team bracket, every round published as REAL fixtures, plus
-    degenerate home-certain predictions for all seven matches -- team 1 wins
-    every match of every trial by construction: QFs -> 1,3,5,7; semis
-    (1v3, 5v7) -> 1,5; final (1v5) -> 1."""
-    fixtures = _quarter_finals() + [
+    """The full 8-team bracket, every round published as REAL fixtures --
+    team 1 wins every match of every trial by construction (when priced with
+    ``_extreme_ratings_for_full_bracket``): QFs -> 1,3,5,7; semis (1v3, 5v7)
+    -> 1,5; final (1v5) -> 1."""
+    return _quarter_finals() + [
         _bracket_fixture(
             id=411, round_name="Semi-finals", home=1, away=3,
             kickoff="2026-06-13T15:00:00+00:00",
@@ -128,8 +158,6 @@ def _full_deterministic_bracket():
             kickoff="2026-06-14T18:00:00+00:00",
         ),
     ]
-    predictions = [_home_certain_prediction(f["id"]) for f in fixtures]
-    return fixtures, predictions
 
 
 def _rows_by_team(store):
@@ -155,9 +183,18 @@ def test_no_knockout_fixtures_is_a_noop(make_store):
 # --- degenerate certainty: p=1.0 for every match wins every sim ---------------
 
 
-def test_team_with_certain_probability_for_every_match_wins_every_sim(make_store):
-    fixtures, predictions = _full_deterministic_bracket()
-    store = make_store(upcoming=fixtures, predictions=predictions)
+def test_team_with_certain_probability_for_every_match_wins_every_sim(
+    make_store, monkeypatch
+):
+    fixtures = _full_deterministic_bracket()
+    store = make_store(upcoming=fixtures)
+    # Force the same degenerate certainty the old stored-prediction fixture
+    # used to encode -- now via an enormous Elo gap (see helper docstring)
+    # injected in place of the real seeded-Elo replay.
+    monkeypatch.setattr(
+        simulate_chances, "_derived_ratings",
+        lambda store: _extreme_ratings_for_full_bracket(),
+    )
 
     counts = run(dry_run=False, store=store, sims=40, seed=123, now=NOW)
 
@@ -235,19 +272,26 @@ def test_same_seed_reproduces_identical_rows_and_ignores_global_random_state(
 # --- an already-decided shootout is a certainty, and its loser is eliminated ---
 
 
-def test_finished_shootout_uses_winner_team_id_and_eliminates_the_loser(make_store):
+def test_finished_shootout_uses_winner_team_id_and_eliminates_the_loser(
+    make_store, monkeypatch
+):
     # QF1 already played: 1-1 after 90 minutes, decided on penalties --
     # winner_team_id says team 2 advanced (the final score alone would call
-    # this an undecidable draw). QF2..QF4 are still scheduled, each with a
-    # home-certain stored prediction (3, 5, 7 advance deterministically).
+    # this an undecidable draw). QF2..QF4 are still scheduled; an enormous
+    # Elo gap (see helper docstring) makes 3, 5, 7 advance deterministically
+    # -- QF1 itself needs no pricing at all, since it's already finished and
+    # resolved straight from winner_team_id.
     played = _bracket_fixture(
         id=401, round_name="Quarter-finals", home=1, away=2,
         kickoff="2026-06-10T18:00:00+00:00", status="finished",
         final_home=1, final_away=1, winner_team_id=2,
     )
     scheduled = _quarter_finals()[1:]
-    predictions = [_home_certain_prediction(f["id"]) for f in scheduled]
-    store = make_store(upcoming=scheduled, finished=[played], predictions=predictions)
+    store = make_store(upcoming=scheduled, finished=[played])
+    monkeypatch.setattr(
+        simulate_chances, "_derived_ratings",
+        lambda store: _extreme_ratings_for_scheduled_qfs(),
+    )
 
     counts = run(dry_run=False, store=store, sims=60, seed=11, now=NOW)
 
@@ -318,29 +362,47 @@ def test_draw_resolution_frequency_matches_the_documented_formula():
     assert home / n == pytest.approx(2 / 3, abs=0.03)
 
 
-# --- match pricing: stored prediction > Elo; synthetic matches are neutral -----
+# --- match pricing: real fixtures use seeded Elo + home advantage; ------------
+# --- synthetic matches use neutral Elo (no stored prediction is ever read) ----
 
 
-def test_match_probs_prefers_stored_prediction_then_elo_then_neutral_elo():
+def test_match_probs_real_fixture_uses_elo_with_home_advantage_synthetic_is_neutral():
     fixture = {"id": 401, "status": "scheduled"}
-    stored = {"home": 0.7, "draw": 0.2, "away": 0.1}
+    ratings = {1: 1650.0, 2: 1500.0}
 
-    # A known fixture with a stored api-football prediction uses it verbatim.
-    assert _match_probs(fixture, 1, 2, ratings={}, pred_probs={401: stored}) == stored
-
-    # A known fixture with no stored prediction prices from Elo, WITH home
-    # advantage (equal ratings -> the home side is genuinely favoured).
-    priced = _match_probs(fixture, 1, 2, ratings={}, pred_probs={})
-    assert priced == elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)
+    # A known (real) fixture prices ENTIRELY from the (seeded) Elo ratings,
+    # WITH home advantage -- never a stored third-party prediction (see
+    # jobs/simulate_chances.py's module docstring, "Why Elo, seeded -- not
+    # the stored third-party prediction").
+    priced = _match_probs(fixture, 1, 2, ratings=ratings)
+    assert priced == elo.match_probabilities(ratings[1], ratings[2])
     assert priced["home"] > priced["away"]
 
-    # A SYNTHETIC match (no fixture row exists) is neutral: no home advantage,
-    # so two equal ratings split the non-draw mass exactly evenly.
-    synthetic = _match_probs(None, 1, 2, ratings={}, pred_probs={})
-    assert synthetic == elo.match_probabilities(
+    # A SYNTHETIC match (no fixture row exists) is neutral: no home
+    # advantage -- the SAME rating pair prices differently once home
+    # advantage is dropped.
+    synthetic = _match_probs(None, 1, 2, ratings=ratings)
+    assert synthetic == elo.match_probabilities(ratings[1], ratings[2], home_advantage=0.0)
+    assert synthetic["home"] < priced["home"]
+
+    # Equal ratings: the real fixture still favours the home side (home
+    # advantage alone); the synthetic match splits the non-draw mass exactly
+    # evenly.
+    equal = {1: elo.DEFAULT_RATING, 2: elo.DEFAULT_RATING}
+    equal_priced = _match_probs(fixture, 1, 2, ratings=equal)
+    assert equal_priced == elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)
+    assert equal_priced["home"] > equal_priced["away"]
+
+    equal_synthetic = _match_probs(None, 1, 2, ratings=equal)
+    assert equal_synthetic == elo.match_probabilities(
         elo.DEFAULT_RATING, elo.DEFAULT_RATING, home_advantage=0.0
     )
-    assert synthetic["home"] == synthetic["away"]
+    assert equal_synthetic["home"] == equal_synthetic["away"]
+
+    # A team missing from ``ratings`` falls back to elo.DEFAULT_RATING (the
+    # "unknown -- cold start" convention).
+    missing = _match_probs(fixture, 1, 2, ratings={})
+    assert missing == elo.match_probabilities(elo.DEFAULT_RATING, elo.DEFAULT_RATING)
 
 
 # --- bracket derivation: real fixtures verbatim, leftovers paired adjacently ---
@@ -370,19 +432,14 @@ def test_round_matches_drops_the_last_odd_survivor_with_a_warning(caplog):
 
 
 def test_run_trial_advances_the_hand_built_bracket_through_empty_early_rounds():
-    fixtures, predictions = _full_deterministic_bracket()
+    fixtures = _full_deterministic_bracket()
     fixtures_by_round = {}
     for fixture in fixtures:
         fixtures_by_round.setdefault(fixture["round"], []).append(fixture)
-    pred_probs = {
-        p["fixture_id"]: {"home": p["prob_home"], "draw": p["prob_draw"],
-                          "away": p["prob_away"]}
-        for p in predictions
-    }
 
     trial = run_trial(
         config.KNOCKOUT_ROUND_ORDER, fixtures_by_round,
-        ratings={}, pred_probs=pred_probs, rng=random.Random(0),
+        ratings=_extreme_ratings_for_full_bracket(), rng=random.Random(0),
     )
 
     # The two rounds this bracket never had are empty, not an error.
@@ -392,6 +449,70 @@ def test_run_trial_advances_the_hand_built_bracket_through_empty_early_rounds():
     assert trial["reached"]["Semi-finals"] == {1, 3, 5, 7}
     assert trial["reached"]["Final"] == {1, 5}
     assert trial["champion"] == 1
+
+
+# --- seeded Elo fixes the "host outranks elite side" bug (regression) ---------
+#
+# jobs/simulate_chances.py's module docstring, "Why Elo, seeded -- not the
+# stored third-party prediction": confirmed live against WC 2026 (2026-07-04)
+# that an UNSEEDED replay (every team cold-starting at the same
+# elo.DEFAULT_RATING, with only 2-3 finished group matches of signal) let
+# host Mexico outrank an objectively stronger England. This test proves the
+# FIX end-to-end through the real ``run()`` pipeline -- not just that
+# ``ratings_from_results(initial_ratings=...)`` plumbing exists (test_elo.py
+# covers that in isolation), but that a strong AWAY seed genuinely
+# out-advances a weaker HOME seed across a real Monte Carlo, even though the
+# host still gets HOME_ADVANTAGE on top of its own (weaker) seed.
+
+
+def test_seeded_elo_lets_a_stronger_away_seed_beat_a_weaker_host_majority_of_trials(
+    make_store,
+):
+    mexico_id, england_id = 100, 200
+    mexico_api_id, england_api_id = 16, 10  # jobs/seed_ratings.py keys
+    assert seed_ratings.SEED_ELO_BY_API_TEAM_ID[england_api_id] > (
+        seed_ratings.SEED_ELO_BY_API_TEAM_ID[mexico_api_id] + elo.HOME_ADVANTAGE
+    ), "fixture assumes England's real seed beats Mexico's even after the host's home advantage"
+
+    # A little group-stage history for BOTH teams -- just enough for
+    # finished_fixtures_for_replay to embed their REAL api_team_id, so
+    # _derived_ratings can seed them from jobs/seed_ratings.py (a rematch
+    # itself would need no seed, but the sim's OWN Round-of-32+ fixture, in
+    # `upcoming` below, is what's actually being priced).
+    finished = [
+        _bracket_fixture(
+            id=501, round_name="Group", home=mexico_id, away=9001,
+            kickoff="2026-06-05T18:00:00+00:00", status="finished",
+            final_home=1, final_away=1,
+        )
+        | {"home_team_api_id": mexico_api_id, "away_team_api_id": 70001},
+        _bracket_fixture(
+            id=502, round_name="Group", home=england_id, away=9002,
+            kickoff="2026-06-05T18:00:00+00:00", status="finished",
+            final_home=2, final_away=0,
+        )
+        | {"home_team_api_id": england_api_id, "away_team_api_id": 70002},
+    ]
+    # The host (home) meets England (away) in the Final -- a single-match
+    # "tournament" so the outcome is decided by exactly one priced match, not
+    # diluted by the earlier rounds' odd-survivor-dropping (see
+    # jobs.simulate_chances._round_matches) each team would otherwise need
+    # partners for.
+    host_vs_england = _bracket_fixture(
+        id=601, round_name="Final", home=mexico_id, away=england_id,
+        kickoff="2026-06-12T18:00:00+00:00",
+    )
+    store = make_store(upcoming=[host_vs_england], finished=finished)
+
+    counts = run(dry_run=False, store=store, sims=2000, seed=99, now=NOW)
+
+    assert counts["teams_alive"] == 2
+    rows = _rows_by_team(store)
+    # England, the stronger SEEDED side, advances (wins this one-match
+    # "tournament") in a clear majority of trials -- not a coin flip tilted
+    # in the host's favour by home advantage alone, which was the bug.
+    assert rows[england_id]["p_win_tournament"] > 0.6
+    assert rows[england_id]["p_win_tournament"] > rows[mexico_id]["p_win_tournament"]
 
 
 # --- idempotency + dry-run -------------------------------------------------------
@@ -415,8 +536,8 @@ def test_same_day_rerun_overwrites_rows_instead_of_duplicating(make_store):
 
 
 def test_dry_run_simulates_but_never_writes(make_store):
-    fixtures, predictions = _full_deterministic_bracket()
-    store = make_store(upcoming=fixtures, predictions=predictions)
+    fixtures = _full_deterministic_bracket()
+    store = make_store(upcoming=fixtures)
 
     counts = run(dry_run=True, store=store, sims=10, seed=3, now=NOW)
 

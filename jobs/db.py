@@ -325,17 +325,39 @@ class SupabaseStore:
         unscoped replay would blend a dev back-test season with the live one
         (or, at multi-league scope, unrelated competitions) into a single Elo
         pool (§9 hardening).
+
+        Each row also carries ``home_team_api_id``/``away_team_api_id`` --
+        API-Football's own STABLE per-team identifier, embedded via the same
+        disambiguated-FK join ``fixtures_needing_stats`` uses (``teams
+        !fixtures_home_team_id_fkey`` / ``!fixtures_away_team_id_fkey``).
+        ``jobs/simulate_chances.py`` uses this to seed the in-house Elo replay
+        with a pre-tournament prior per team (``jobs/seed_ratings.py``)
+        without a second query. Either field is simply ``None`` if the embed
+        comes back empty (should not happen for a real fixture's team FK, but
+        handled defensively) -- ``seed_ratings.seed_rating_for_api_team_id``
+        treats that as "unknown -- cold start".
         """
         if not api_league_ids:
             return []
-        return self._paginated(
+        rows = self._paginated(
             lambda: self._client.table("fixtures")
-            .select("*, leagues!inner(api_league_id, season)")
+            .select(
+                "*, "
+                "home_team:teams!fixtures_home_team_id_fkey(api_team_id), "
+                "away_team:teams!fixtures_away_team_id_fkey(api_team_id), "
+                "leagues!inner(api_league_id, season)"
+            )
             .eq("status", "finished")
             .eq("leagues.season", season)
             .in_("leagues.api_league_id", api_league_ids)
             .order("kickoff_utc")
         )
+        for row in rows:
+            home_team = row.pop("home_team", None) or {}
+            away_team = row.pop("away_team", None) or {}
+            row["home_team_api_id"] = home_team.get("api_team_id")
+            row["away_team_api_id"] = away_team.get("api_team_id")
+        return rows
 
     def existing_prediction_fixture_ids(self, source: str) -> set[int]:
         rows = self._paginated(

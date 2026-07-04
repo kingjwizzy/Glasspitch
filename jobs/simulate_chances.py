@@ -19,11 +19,12 @@ independent trials resolves the ENTIRE remaining bracket:
   A truly finished match therefore contributes the SAME certain outcome to
   every trial.
 * A fixture that hasn't kicked off yet (``scheduled``/``live``) samples its
-  winner from a three-way H/D/A probability: the fixture's own stored
-  ``api-football`` prediction if one already exists on the ledger, else this
-  job's own Elo-derived estimate (``jobs.elo.match_probabilities``, replayed
-  the SAME way ``fetch_predictions.py``/``snapshot_probabilities.py`` do --
-  never a second, divergent Elo implementation).
+  winner from a three-way H/D/A probability priced ENTIRELY from this job's
+  own Elo estimate (``jobs.elo.match_probabilities``, replayed the SAME way
+  ``fetch_predictions.py``/``snapshot_probabilities.py`` do -- never a second,
+  divergent Elo implementation) -- SEEDED with pre-tournament priors from
+  ``jobs/seed_ratings.py`` (see "Why Elo, seeded -- not the stored third-party
+  prediction" below).
 * A round that ISN'T FULLY PUBLISHED yet by the data provider (API-Football
   only publishes a knockout fixture once BOTH its feeder matches are
   decided -- confirmed live 2026-07-03: only 6 of 8 Round-of-16 slots existed
@@ -32,6 +33,39 @@ independent trials resolves the ENTIRE remaining bracket:
   (see "Bracket-derivation convention" below) -- a synthetic match, priced
   purely from Elo (no home advantage: we don't know who would host a match
   that doesn't exist yet).
+
+## Why Elo, seeded -- not the stored third-party prediction
+
+Earlier versions of this job priced a known fixture from its own stored
+``api-football`` prediction when one existed, falling back to Elo only for
+fixtures with no stored prediction. Confirmed live against WC 2026
+(2026-07-04) this produced a wrong ranking: host Mexico #2 in
+``tournament_chances``, England #12 below Canada/USA. Two compounding causes:
+
+1. ``jobs.elo.ratings_from_results`` cold-started EVERY team at the same
+   ``elo.DEFAULT_RATING`` and replayed only 2-3 finished group matches --
+   nowhere near enough signal to separate an elite side from a mid-table
+   host, so the replayed Elo was close to noise. FIXED by seeding the replay
+   with ``jobs/seed_ratings.py``'s static pre-tournament strength table (see
+   ``_derived_ratings``).
+2. API-Football's stored ``predictions.percent`` buckets are coarse (rounded
+   to a handful of values) and structurally home-biased -- e.g. the real
+   stored Mexico(H)-vs-England(A) prediction was ``home 0.45 / draw 0.45 /
+   away 0.10``, which the knockout draw-resolution convention below turns
+   into roughly an 82% chance of HOST Mexico advancing over an objectively
+   stronger England. Blending that stored value with a (seeded) Elo estimate
+   was tried and REJECTED: even a straight 50/50 blend of the stored
+   0.45/0.45/0.10 with the seeded-Elo estimate for that exact fixture still
+   left Mexico narrowly favoured (~0.35 vs ~0.33) -- not good enough given
+   the fixture is explicitly meant to favour England. Only pricing has been
+   changed here; the ledger's PUBLICLY DISPLAYED per-match prediction still
+   prefers api-football as primary (ARCHITECTURE.md §9, unchanged) --
+   this job's own SIMULATION INPUT is a different, narrower thing.
+
+So this job now prices every not-yet-decided match (real or synthetic)
+straight from the (seeded) in-house Elo, and no longer reads any fixture's
+stored prediction at all. ``jobs.db.SupabaseStore.third_party_prediction_probs``
+is left in place (unused by this job) in case a future job wants it.
 
 **Extra-time/penalties convention (knockout draws):** a sampled result of
 'draw' can't stand for a knockout match -- it is resolved by a coin weighted
@@ -81,7 +115,7 @@ import logging
 import random
 from typing import Optional
 
-from jobs import config, elo, util
+from jobs import config, elo, seed_ratings, util
 from jobs.cli import main
 from jobs.db import SupabaseStore
 
@@ -93,6 +127,16 @@ def _derived_ratings(store: SupabaseStore) -> dict:
     separate copy (not a shared import) so each job's replay stays
     self-contained, matching fetch_predictions.py/snapshot_probabilities.py's
     own copies; all three call the same public ``jobs.elo.ratings_from_results``.
+
+    SEEDED with ``jobs/seed_ratings.py``'s static pre-tournament priors (see
+    this module's docstring, "Why Elo, seeded"): each finished fixture already
+    carries its side's ``api_team_id`` (embedded by
+    ``finished_fixtures_for_replay``), which keys the seed lookup. The seed
+    dict is merged in on top of the replay's own output so a team that is
+    seeded but happens to have NO finished-match history yet (should not
+    happen once the group stage is complete, but kept explicit rather than
+    relied upon) still gets its seed rather than silently falling through to
+    ``elo.DEFAULT_RATING`` wherever a caller reads ``ratings.get(team_id, ...)``.
     """
     finished = store.finished_fixtures_for_replay(
         api_league_ids=config.TRACKED_LEAGUE_IDS, season=config.SEASON,
@@ -102,7 +146,18 @@ def _derived_ratings(store: SupabaseStore) -> dict:
         for f in finished
         if f.get("final_home_goals") is not None and f.get("final_away_goals") is not None
     ]
-    return elo.ratings_from_results(results)
+    initial_ratings: dict = {}
+    for f in finished:
+        initial_ratings.setdefault(
+            f["home_team_id"],
+            seed_ratings.seed_rating_for_api_team_id(f.get("home_team_api_id")),
+        )
+        initial_ratings.setdefault(
+            f["away_team_id"],
+            seed_ratings.seed_rating_for_api_team_id(f.get("away_team_api_id")),
+        )
+    replayed = elo.ratings_from_results(results, initial_ratings=initial_ratings)
+    return {**initial_ratings, **replayed}
 
 
 def _true_winner(fixture: dict) -> Optional[int]:
@@ -154,21 +209,21 @@ def _match_probs(
     team_b: int,
     *,
     ratings: dict,
-    pred_probs: dict[int, dict],
 ) -> dict[str, float]:
     """Three-way probability for one match, ``team_a`` in the 'home' slot.
 
-    A KNOWN, not-yet-finished fixture prefers its own stored third-party
-    prediction; otherwise (including every SYNTHETIC match, which has no
-    fixture row at all) falls back to Elo. Synthetic matches use NO home
-    advantage -- we don't know who would host a fixture that doesn't exist
-    yet, so treating the pairing as neutral avoids arbitrarily favouring
-    whichever team happened to sort first.
+    ALWAYS priced from the (seeded) in-house Elo -- this job deliberately does
+    NOT read a fixture's stored third-party prediction (unlike the publicly
+    displayed per-match prediction, which stays api-football-primary per §9;
+    see this module's docstring, "Why Elo, seeded -- not the stored
+    third-party prediction", for the diagnosed bug this fixes). A KNOWN,
+    not-yet-finished fixture uses the normal home-advantage Elo estimate;
+    a SYNTHETIC match (``fixture is None``, no fixture row exists at all)
+    uses NO home advantage -- we don't know who would host a fixture that
+    doesn't exist yet, so treating the pairing as neutral avoids arbitrarily
+    favouring whichever team happened to sort first.
     """
     if fixture is not None:
-        stored = pred_probs.get(fixture["id"])
-        if stored is not None:
-            return stored
         return elo.match_probabilities(
             ratings.get(team_a, elo.DEFAULT_RATING), ratings.get(team_b, elo.DEFAULT_RATING)
         )
@@ -185,7 +240,6 @@ def _resolve_match(
     team_b: int,
     *,
     ratings: dict,
-    pred_probs: dict[int, dict],
     rng: random.Random,
 ) -> int:
     """Resolve one match (real or synthetic) to a single advancing team_id."""
@@ -199,7 +253,7 @@ def _resolve_match(
             "back to sampling for this trial.",
             fixture.get("id"),
         )
-    probs = _match_probs(fixture, team_a, team_b, ratings=ratings, pred_probs=pred_probs)
+    probs = _match_probs(fixture, team_a, team_b, ratings=ratings)
     outcome = _sample_outcome(probs["home"], probs["draw"], probs["away"], rng=rng)
     return team_a if outcome == "home" else team_b
 
@@ -239,7 +293,6 @@ def run_trial(
     fixtures_by_round: dict[str, list[dict]],
     *,
     ratings: dict,
-    pred_probs: dict[int, dict],
     rng: random.Random,
 ) -> dict:
     """One Monte Carlo trial: resolve every round in ``round_order`` in
@@ -254,7 +307,7 @@ def run_trial(
         matches = _round_matches(round_name, known, carry_in)
         reached[round_name] = {team for _, a, b in matches for team in (a, b)}
         carry_in = [
-            _resolve_match(f, a, b, ratings=ratings, pred_probs=pred_probs, rng=rng)
+            _resolve_match(f, a, b, ratings=ratings, rng=rng)
             for f, a, b in matches
         ]
     champion = carry_in[0] if carry_in else None
@@ -330,15 +383,10 @@ def run(
         log.info("simulate_chances: no surviving teams (tournament decided); nothing to write.")
         return counts
 
+    # Seeded Elo ratings ONLY -- this job no longer reads any fixture's stored
+    # third-party prediction for its own pricing (see module docstring, "Why
+    # Elo, seeded -- not the stored third-party prediction").
     ratings = _derived_ratings(store)
-    unfinished_fixture_ids = [f["id"] for f in fixtures if f["status"] != "finished"]
-    pred_probs = (
-        store.third_party_prediction_probs(
-            unfinished_fixture_ids, source=config.THIRD_PARTY_SOURCE
-        )
-        if unfinished_fixture_ids
-        else {}
-    )
 
     win_counts = {team_id: 0 for team_id in alive_teams}
     reach_final_counts = {team_id: 0 for team_id in alive_teams}
@@ -347,7 +395,7 @@ def run(
     for _ in range(sims):
         trial = run_trial(
             config.KNOCKOUT_ROUND_ORDER, fixtures_by_round,
-            ratings=ratings, pred_probs=pred_probs, rng=rng,
+            ratings=ratings, rng=rng,
         )
         champion = trial["champion"]
         if champion in win_counts:
