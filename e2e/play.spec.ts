@@ -48,11 +48,15 @@ test('/play (anonymous) has exactly one sign-in affordance and no pressure mecha
   await expect(page.getByText(/prize-free forever/)).toBeVisible();
   await expect(page.getByText(/no money, no streaks, no pressure/)).toBeVisible();
 
-  // Static explainer means static: no forms, no inputs, no dialogs — the
-  // interactive pick islands exist only behind auth.
+  // Static explainer means static: no forms, no inputs, no OPEN dialogs — the
+  // interactive pick islands exist only behind auth. MobileNav's hamburger
+  // dialog (src/components/MobileNav.tsx) is always present in the DOM, even
+  // closed, so its aria-controls keeps pointing at a real element — nobody
+  // has opened it here, so assert none is actually VISIBLE rather than that
+  // zero dialog elements exist at all.
   await expect(page.locator('main form')).toHaveCount(0);
   await expect(page.locator('main input')).toHaveCount(0);
-  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+  await expect(page.locator('[role="dialog"]:visible')).toHaveCount(0);
 
   // No streak/urgency vocabulary beyond the shared sweep: the words that
   // would signal engagement mechanics creeping into the game surface.

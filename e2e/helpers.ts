@@ -63,6 +63,32 @@ export async function expectOnlySanctionedImages(page: Page) {
   }
 }
 
+/** Primary-nav reachability, viewport-aware (audit #2 amendment):
+ *  Header.tsx's inline `nav[aria-label="Primary"]` row is `hidden md:flex` —
+ *  below md there is no room for seven inline links on a phone-width
+ *  viewport, so MobileNav's hamburger (a client island beside Header) takes
+ *  over instead, and the landmark itself stays parked in the DOM (so its own
+ *  `aria-controls`/labelling stay wired to a real element) without being
+ *  visible. Asserting plain `.toBeVisible()` on the landmark unconditionally
+ *  would therefore fail on every page at the Pixel 5 viewport by design, not
+ *  by regression — this checks the reachable affordance for whichever
+ *  viewport is actually rendering: the inline nav at md+, the hamburger
+ *  toggle below it. Dedicated hamburger *behaviour* (open/close/focus) is
+ *  covered separately in full-site.spec.ts. */
+export async function expectPrimaryNavReachable(page: Page) {
+  const primaryNav = page.locator('nav[aria-label="Primary"]');
+  await expect(primaryNav).toBeAttached();
+
+  const viewport = page.viewportSize();
+  const isBelowMd = (viewport?.width ?? 1280) < 768;
+  if (isBelowMd) {
+    await expect(primaryNav).toBeHidden();
+    await expect(page.getByRole('button', { name: /open menu|close menu/i })).toBeVisible();
+  } else {
+    await expect(primaryNav).toBeVisible();
+  }
+}
+
 /** Structural/compliance assertions every page must satisfy regardless of
  *  route or auth state (ARCHITECTURE.md §13; DESIGN.md §2, §6). Assumes `page`
  *  has already navigated. */
@@ -75,8 +101,7 @@ export async function expectLandmarksAndCompliance(page: Page) {
   const footer = page.locator('footer');
   await expect(footer).toContainText('not betting advice');
 
-  const primaryNav = page.locator('nav[aria-label="Primary"]');
-  await expect(primaryNav).toBeVisible();
+  await expectPrimaryNavReachable(page);
 
   await expect(page.locator('h1')).toHaveCount(1);
 

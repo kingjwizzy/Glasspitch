@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import MobileNav from '@/components/MobileNav';
 import { SITE_NAME } from '@/lib/constants';
 
 // Static Server Component — no "use client", no auth/session awareness (v3
@@ -8,7 +9,10 @@ import { SITE_NAME } from '@/lib/constants';
 // which itself redirects an already-signed-in visitor to /account
 // (src/middleware.ts) — so the header stays correct for every visitor without
 // ever reading a cookie itself.
-const NAV = [
+//
+// Exported so MobileNav — the below-md hamburger client island — renders the
+// same seven destinations from one source of truth instead of a duplicate list.
+export const NAV = [
   { href: '/', label: 'Home' },
   { href: '/matches', label: 'Matches' },
   // W6: the daily-simulated World Cup chances — the owner's flagship public
@@ -33,12 +37,10 @@ export default function Header() {
         >
           {SITE_NAME}
         </Link>
-        {/* min-w-0 lets this flex item shrink below its content width so it
-            can scroll horizontally instead of pushing "Sign in" off-screen on
-            narrow phones — a zero-JS way to fit five nav items plus the brand
-            and "Sign in" at once (DESIGN.md §4 tap-target floor still holds:
-            every link stays ≥44px tall, just visually scrollable as a row). */}
-        <nav aria-label="Primary" className="min-w-0 flex-1 overflow-x-auto">
+        {/* Below md there's no room for seven inline links (a phone-width
+            viewport clips this row hard) — they move into MobileNav's
+            hamburger overlay instead, so this row is desktop-only. */}
+        <nav aria-label="Primary" className="hidden min-w-0 flex-1 md:block">
           <ul className="flex items-center text-sm">
             {NAV.map((item) => (
               <li key={item.href} className="shrink-0">
@@ -56,19 +58,22 @@ export default function Header() {
           // The single sitewide premium affordance (DESIGN.md §6: visible is
           // fine, pressure is not — solid amber pill, no motion, no urgency
           // copy). Env-gated so it appears only once live payments are on.
+          // Desktop-only here — MobileNav lists it as a plain row instead, so
+          // it never has to compete with the hamburger for phone-width space.
           <Link
             href="/premium"
-            className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-away px-3.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+            className="hidden min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-away px-3.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90 md:inline-flex"
           >
             Go Premium
           </Link>
         ) : null}
         <Link
           href="/login"
-          className="-ml-1 inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-sm text-fg-dim transition-colors hover:text-fg"
+          className="-ml-1 hidden min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-sm text-fg-dim transition-colors hover:text-fg md:inline-flex"
         >
           Sign in
         </Link>
+        <MobileNav />
       </div>
     </header>
   );

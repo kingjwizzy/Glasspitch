@@ -154,63 +154,115 @@ export default async function BoardPage() {
               href="/board/ticker"
               linkLabel="Fixture ticker"
             />
-            <div className="glass overflow-x-auto px-4 py-1">
-              <table className="w-full min-w-[34rem] text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-fg-dim">
-                    <th scope="col" className="py-2.5 pr-3 font-normal">
-                      Team
-                    </th>
-                    <th scope="col" className="py-2.5 pr-3 font-normal">
-                      Next
-                    </th>
-                    <th scope="col" className="py-2.5 pr-3 text-right font-normal">
-                      Win
-                    </th>
-                    <th scope="col" className="py-2.5 pr-3 text-right font-normal">
-                      Clean sheet
-                    </th>
-                    <th scope="col" className="py-2.5 pr-3 text-right font-normal">
-                      xG for / against
-                    </th>
-                    <th scope="col" className="py-2.5 text-right font-normal">
-                      Day move
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {teams.map((t: BoardSnapshotRow) => (
-                    <tr key={t.teamId}>
-                      <td className="py-3 pr-3">
-                        <span className="flex items-center gap-2 text-[15px] font-medium text-fg">
+            <div className="glass px-4 py-1">
+              {/* Below sm: one stacked card per team (audit #10 — Clean
+                  sheet/xG/Day move were clipped off-screen with no scroll
+                  cue on a 393px phone, the mobile-audience majority).
+                  Win% is the headline number; the rest are labelled stat
+                  lines. The sm+ table below is untouched. */}
+              <ul className="divide-y divide-line sm:hidden">
+                {teams.map((t: BoardSnapshotRow) => (
+                  <li key={t.teamId} className="py-3.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 text-[15px] font-medium text-fg">
                           <TeamFlag name={t.team} />
-                          {t.team}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-3 text-fg-dim">
+                          <span className="truncate">{t.team}</span>
+                        </p>
                         <Link
                           href={`/match/${t.fixtureId}`}
-                          className="transition-colors hover:text-fg"
+                          className="mt-0.5 inline-block text-xs text-fg-dim transition-colors hover:text-fg"
                         >
                           {t.isHome ? 'v' : 'at'} {t.opponent}
                         </Link>
-                      </td>
-                      <td className="py-3 pr-3 text-right font-mono font-medium text-fg">
-                        {pct(t.probWin)}
-                      </td>
-                      <td className="py-3 pr-3 text-right font-mono text-fg-dim">
-                        {pct(t.probCleanSheet)}
-                      </td>
-                      <td className="py-3 pr-3 text-right font-mono text-fg-dim">
-                        {t.xgFor.toFixed(1)} / {t.xgAgainst.toFixed(1)}
-                      </td>
-                      <td className="py-3 text-right">
-                        <MoveFigure delta={t.deltaProbWin} />
-                      </td>
+                      </div>
+                      <p className="shrink-0 text-right">
+                        <span className="block font-mono text-2xl font-semibold text-fg">
+                          {pct(t.probWin)}
+                        </span>
+                        <span className="block text-[11px] text-fg-faint">win</span>
+                      </p>
+                    </div>
+                    <dl className="mt-2.5 space-y-1 border-t border-line pt-2.5 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <dt className="text-fg-faint">Clean sheet</dt>
+                        <dd className="font-mono text-fg-dim">{pct(t.probCleanSheet)}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <dt className="text-fg-faint">xG for / against</dt>
+                        <dd className="font-mono text-fg-dim">
+                          {t.xgFor.toFixed(1)} / {t.xgAgainst.toFixed(1)}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <dt className="text-fg-faint">Day move</dt>
+                        <dd>
+                          <MoveFigure delta={t.deltaProbWin} />
+                        </dd>
+                      </div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-[34rem] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-fg-dim">
+                      <th scope="col" className="py-2.5 pr-3 font-normal">
+                        Team
+                      </th>
+                      <th scope="col" className="py-2.5 pr-3 font-normal">
+                        Next
+                      </th>
+                      <th scope="col" className="py-2.5 pr-3 text-right font-normal">
+                        Win
+                      </th>
+                      <th scope="col" className="py-2.5 pr-3 text-right font-normal">
+                        Clean sheet
+                      </th>
+                      <th scope="col" className="py-2.5 pr-3 text-right font-normal">
+                        xG for / against
+                      </th>
+                      <th scope="col" className="py-2.5 text-right font-normal">
+                        Day move
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {teams.map((t: BoardSnapshotRow) => (
+                      <tr key={t.teamId}>
+                        <td className="py-3 pr-3">
+                          <span className="flex items-center gap-2 text-[15px] font-medium text-fg">
+                            <TeamFlag name={t.team} />
+                            {t.team}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-3 text-fg-dim">
+                          <Link
+                            href={`/match/${t.fixtureId}`}
+                            className="transition-colors hover:text-fg"
+                          >
+                            {t.isHome ? 'v' : 'at'} {t.opponent}
+                          </Link>
+                        </td>
+                        <td className="py-3 pr-3 text-right font-mono font-medium text-fg">
+                          {pct(t.probWin)}
+                        </td>
+                        <td className="py-3 pr-3 text-right font-mono text-fg-dim">
+                          {pct(t.probCleanSheet)}
+                        </td>
+                        <td className="py-3 pr-3 text-right font-mono text-fg-dim">
+                          {t.xgFor.toFixed(1)} / {t.xgAgainst.toFixed(1)}
+                        </td>
+                        <td className="py-3 text-right">
+                          <MoveFigure delta={t.deltaProbWin} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         </>

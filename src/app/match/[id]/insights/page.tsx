@@ -31,6 +31,111 @@ export async function generateMetadata({ params }: InsightsPageProps): Promise<M
   };
 }
 
+// The 4 things Premium actually adds (mirrors /premium's INCLUDED list —
+// kept local/literal here rather than shared, per the ownership split: this
+// file doesn't import from /premium and vice versa).
+const VALUE_ITEMS = [
+  'Prediction detail',
+  'Post-match xG & stats',
+  'Ledger CSV export',
+  'Ledger filters',
+] as const;
+
+const MOCK_ROWS = [
+  'Expected goals',
+  'Shots on target',
+  'Big chances',
+  'Possession',
+  'xG against',
+  'Corners',
+] as const;
+
+/** A purely decorative, static mockup of what an unlocked insights card looks
+ *  like — NOT real fixture_insights data (never fetched for a non-entitled
+ *  viewer, RLS aside). Blurred + `aria-hidden` so it reads unambiguously as a
+ *  locked preview, not content, to sighted and screen-reader users alike. */
+function InsightsMock() {
+  return (
+    <div aria-hidden="true" className="select-none blur-[5px]">
+      <div className="rounded-2xl border border-line bg-surface p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="h-4 w-36 rounded bg-surface-2" />
+          <div className="h-3 w-16 rounded bg-surface-2" />
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+          {MOCK_ROWS.map((label) => (
+            <div key={label}>
+              <dt className="text-xs text-fg-dim">{label}</dt>
+              <dd className="mt-0.5 font-mono font-medium text-fg">—.—</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+/** The paywall itself, shared by the logged-out and logged-in-non-premium
+ *  branches: what premium adds, the price (both branches, per audit #4 —
+ *  previously missing when logged out), and a single filled primary CTA.
+ *  `showSignIn` is true only when logged out (someone who already subscribes
+ *  but isn't recognised on this device/browser). */
+function PremiumTeaser({ fixtureId, showSignIn }: { fixtureId: number; showSignIn: boolean }) {
+  return (
+    <section aria-labelledby="teaser-heading" className="space-y-4">
+      <h2 id="teaser-heading" className="font-display text-lg font-semibold tracking-tight text-fg">
+        See the deeper read
+      </h2>
+
+      <div className="relative overflow-hidden rounded-2xl border border-line">
+        <InsightsMock />
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-surface/50 via-surface/85 to-surface p-6">
+          <p className="max-w-xs text-center text-sm font-medium leading-relaxed text-fg-dim">
+            A locked preview — subscribe to unlock the real detail for every
+            fixture.
+          </p>
+        </div>
+      </div>
+
+      <ul className="grid gap-2 text-sm text-fg-dim sm:grid-cols-2">
+        {VALUE_ITEMS.map((item) => (
+          <li key={item} className="flex items-center gap-2">
+            <span aria-hidden="true" className="text-green">
+              ✓
+            </span>
+            {item}
+          </li>
+        ))}
+      </ul>
+
+      <p className="text-sm font-medium text-fg">£6/month or £39/year</p>
+
+      <p className="text-xs leading-relaxed text-fg-dim">
+        The full ledger and every match&rsquo;s probabilities stay free,
+        forever, either way.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Link
+          href="/premium"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-green px-4 text-sm font-semibold text-bg transition-colors hover:bg-green-bright"
+        >
+          Go Premium
+          <span aria-hidden="true">→</span>
+        </Link>
+        {showSignIn ? (
+          <Link
+            href={`/login?next=/match/${fixtureId}/insights`}
+            className="inline-flex min-h-11 items-center text-sm font-medium text-fg-dim underline transition-colors hover:text-fg"
+          >
+            Already subscribe? Sign in
+          </Link>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export default async function MatchInsightsPage({ params }: InsightsPageProps) {
   const { id } = await params;
   const fixtureId = parseId(id);
@@ -41,7 +146,7 @@ export default async function MatchInsightsPage({ params }: InsightsPageProps) {
   const backLink = `/match/${fixtureId}`;
 
   return (
-    <article className="space-y-6">
+    <article className="min-h-[70vh] space-y-6">
       <header className="space-y-1">
         <Link
           href={backLink}
@@ -55,36 +160,9 @@ export default async function MatchInsightsPage({ params }: InsightsPageProps) {
       </header>
 
       {!user ? (
-        <div className="rounded-2xl border border-line bg-surface p-5">
-          <p className="text-sm leading-relaxed text-fg-dim">
-            Prediction detail and post-match stats for this fixture are part of
-            Glass Pitch Premium. The full ledger and every match&rsquo;s
-            probabilities stay free without an account —{' '}
-            <Link
-              href={`/login?next=/match/${fixtureId}/insights`}
-              className="text-green underline transition-colors hover:text-green-bright"
-            >
-              sign in
-            </Link>{' '}
-            if you already subscribe, or{' '}
-            <Link href="/premium" className="text-green underline transition-colors hover:text-green-bright">
-              see what Premium includes
-            </Link>
-            .
-          </p>
-        </div>
+        <PremiumTeaser fixtureId={fixtureId} showSignIn />
       ) : !isPremium ? (
-        <div className="rounded-2xl border border-line bg-surface p-5">
-          <p className="text-sm leading-relaxed text-fg-dim">
-            Prediction detail and post-match stats for this fixture are part of
-            Glass Pitch Premium — £6/month or £39/year. The full ledger and
-            every match&rsquo;s probabilities stay free forever either way.{' '}
-            <Link href="/premium" className="text-green underline transition-colors hover:text-green-bright">
-              See what&rsquo;s included
-            </Link>
-            .
-          </p>
-        </div>
+        <PremiumTeaser fixtureId={fixtureId} showSignIn={false} />
       ) : (
         <InsightsContent fixtureId={fixtureId} />
       )}

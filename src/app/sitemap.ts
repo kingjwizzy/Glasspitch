@@ -29,6 +29,17 @@ function matchChangeFrequency(
   return hoursToKickoff < 24 ? 'hourly' : 'daily';
 }
 
+/** Upcoming/live fixtures are the growth-engine crawl target (audit #10) —
+ *  raised above the flat baseline every match page used to share. A finished,
+ *  already-scored match keeps the original baseline rather than being pushed
+ *  down, since it may already be indexed/ranking. `SitemapFixture` doesn't
+ *  carry the fixture's knockout `round` label (see needs_from_others in this
+ *  task's return), so this is status-based only, not a true
+ *  group-vs-knockout split. */
+function matchPriority(status: string): number {
+  return status === 'finished' ? 0.5 : 0.8;
+}
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}`, changeFrequency: 'daily', priority: 1 },
@@ -45,9 +56,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // W6 public surfaces: the free Gameweek Board + Fixture Ticker (nightly
     // data) and the /play explainer (the game itself is authed and noindexed
     // — only the public landing view belongs here).
-    // W6: World Cup chances — the daily-simulated flagship (public ISR).
-    { url: `${SITE_URL}/chances`, changeFrequency: 'daily', priority: 0.7 },
-    { url: `${SITE_URL}/board`, changeFrequency: 'daily', priority: 0.6 },
+    // W6: World Cup chances — the daily-simulated flagship (public ISR). Kept
+    // above the static/legal pages below (audit #10 — key hubs outrank
+    // evergreen static content during the tournament window).
+    { url: `${SITE_URL}/chances`, changeFrequency: 'daily', priority: 0.8 },
+    { url: `${SITE_URL}/board`, changeFrequency: 'daily', priority: 0.7 },
     { url: `${SITE_URL}/board/ticker`, changeFrequency: 'daily', priority: 0.5 },
     { url: `${SITE_URL}/play`, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${SITE_URL}/about`, changeFrequency: 'weekly', priority: 0.6 },
@@ -59,7 +72,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
     // Static legal pages (v2). Everything auth/account/premium-gated is
     // deliberately NOT listed here — noindexed and out of the sitemap until
-    // the owner flips premium live (ARCHITECTURE.md §13).
+    // the owner flips premium live (ARCHITECTURE.md §13). This includes
+    // /premium itself: unlike its own page-level `robots` (which already
+    // flips to indexable at NEXT_PUBLIC_PREMIUM_LIVE==='1'), the sitemap has
+    // no matching conditional entry for it yet — left as a follow-up rather
+    // than added here (audit #10 item 4).
     { url: `${SITE_URL}/privacy`, changeFrequency: 'monthly', priority: 0.3 },
     { url: `${SITE_URL}/terms`, changeFrequency: 'monthly', priority: 0.3 },
     { url: `${SITE_URL}/refunds`, changeFrequency: 'monthly', priority: 0.3 },
@@ -89,7 +106,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Otherwise the kickoff time itself is more meaningful than row metadata.
     lastModified: f.status === 'finished' ? new Date(f.updatedAt) : new Date(f.kickoffUtc),
     changeFrequency: matchChangeFrequency(f.kickoffUtc, f.status),
-    priority: 0.5,
+    priority: matchPriority(f.status),
   }));
 
   return [...staticRoutes, ...leagueRoutes, ...teamRoutes, ...matchRoutes];

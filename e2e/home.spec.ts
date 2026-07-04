@@ -22,7 +22,10 @@ test('/ hero band leads with the kicker, freshness stamp, and featured match', a
   page,
 }) => {
   // One-line kicker h1 + subline — the marketing paragraph is gone.
-  await expect(page.locator('h1')).toHaveText('Football analysis you can check');
+  // WC-window SEO (audit #10): the h1 is temporarily World-Cup-specific while
+  // the tournament is live/imminent — revert to "Football analysis you can
+  // check" once it reverts in source (see src/app/page.tsx's HOME_TITLE note).
+  await expect(page.locator('h1')).toHaveText('World Cup 2026 predictions you can check');
   await expect(
     page.getByText('Every call locked at kickoff, scored either way.'),
   ).toBeVisible();
@@ -104,10 +107,16 @@ test('/ proof rail shows the record, the ✓/✗ receipts strip, and the immutab
     await expect(chip.locator('svg')).toHaveCount(1);
   }
 
-  // The immutability sentence and the ledger link.
-  await expect(
-    hero.getByText('The ledger cannot be edited — not even by us.', { exact: false }),
-  ).toBeVisible();
+  // The immutability claim — softened from a bare assertion into a
+  // verifiable hash-chain framing (audit fix): published/locked, then sealed
+  // into a public SHA-256 hash chain, linking through to the methodology's
+  // #hash-chain section rather than just asserting "trust us".
+  await expect(hero.getByText(/sealed into a public/)).toBeVisible();
+  await expect(hero.getByText(/tamper-evident, not just promised/)).toBeVisible();
+  await expect(hero.getByRole('link', { name: 'SHA-256 hash chain' })).toHaveAttribute(
+    'href',
+    '/methodology#hash-chain',
+  );
   await expect(hero.getByRole('link', { name: 'See the full ledger' })).toHaveAttribute(
     'href',
     '/ledger',
@@ -263,13 +272,48 @@ test('/ has exactly one sign-up affordance — the end-cap card, no pressure cop
   await expect(main.locator('a[href="/login"]')).toHaveCount(2);
   await expect(endCap.locator('a[href="/login"]')).toHaveCount(2);
 
-  // No email-capture form, no modal/interstitial, no premium upsell in the
-  // body (premium's one-quiet-mention budget is spent elsewhere).
+  // No email-capture form or modal/interstitial competes with the end-cap
+  // itself. Audit-fix note: the page now DOES carry one quiet premium
+  // mention elsewhere in the body (its own dedicated section, tested below)
+  // — this end-cap specifically must stay free of it, so the two
+  // affordances never compete for attention on the same card.
   await expect(main.locator('form')).toHaveCount(0);
   await expect(main.locator('input')).toHaveCount(0);
-  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
-  await expect(main.locator('a[href="/premium"]')).toHaveCount(0);
-  expect(await main.innerText()).not.toMatch(/premium/i);
+  // MobileNav's dialog overlay is always present in the DOM (so its
+  // aria-controls keeps referencing a real element) but only ever VISIBLE
+  // while open — nobody has opened it in this test, so filter to visible
+  // dialogs rather than asserting zero dialog elements exist at all.
+  await expect(page.locator('[role="dialog"]:visible')).toHaveCount(0);
+  await expect(endCap.locator('a[href="/premium"]')).toHaveCount(0);
+  expect(await endCap.innerText()).not.toMatch(/premium/i);
+});
+
+// ── The one quiet premium mention in the body (audit #18; DESIGN.md §6: no
+// more than one quiet upgrade affordance per page, no pressure copy) — its
+// own section, separate from the sign-up end-cap above so the two
+// affordances never compete. ───────────────────────────────────────────────
+test('/ has exactly one quiet premium mention in the body, with no pressure copy', async ({
+  page,
+}) => {
+  const main = page.locator('main');
+  const section = page.locator('section[aria-labelledby="premium-heading"]');
+
+  await expect(section.getByRole('heading', { name: 'Want more depth?' })).toBeVisible();
+  await expect(
+    section.getByText(/record above and every prediction stay free, always/),
+  ).toBeVisible();
+  await expect(section.getByRole('link', { name: /See what.s included/ })).toHaveAttribute(
+    'href',
+    '/premium',
+  );
+
+  // Exactly one premium link anywhere in the page body — DESIGN.md §6's "no
+  // more than one quiet upgrade affordance per page" enforced directly.
+  await expect(main.locator('a[href="/premium"]')).toHaveCount(1);
+
+  const bodyText = (await main.innerText()).toLowerCase();
+  expect(bodyText).not.toMatch(/hurry|only today|last chance|don['’]t miss/);
+  expect(bodyText).not.toMatch(/limited time|act now|offer ends/);
 });
 
 // ── Motion kit: CSS-only, and fully inert under prefers-reduced-motion ─────
@@ -309,7 +353,15 @@ test('/ reduced-motion kill-switch disables the W4 motion kit entirely', async (
 
   // Under reduce, the hero stagger runs NO animation and content sits at its
   // final, fully visible state (motion never carries meaning).
-  const kicker = page.locator('.rise-in').first();
+  //
+  // Scoped to the hero section, not `.rise-in` unqualified: MobileNav's
+  // hamburger panel (src/components/MobileNav.tsx) reuses the very same
+  // `.rise-in` keyframe for its own entrance and sits earlier in DOM order
+  // than the hero (it lives in the sitewide Header) — an unscoped `.first()`
+  // would silently grab that closed, `display:none` panel instead of the
+  // hero kicker this test actually means to exercise.
+  const hero = page.locator('section[aria-labelledby="home-kicker"]');
+  const kicker = hero.locator('.rise-in').first();
   expect(await kicker.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
   expect(await kicker.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
 });
@@ -317,7 +369,12 @@ test('/ reduced-motion kill-switch disables the W4 motion kit entirely', async (
 test('/ hero stagger animates only when motion is allowed', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/', { waitUntil: 'load' });
-  const kicker = page.locator('.rise-in').first();
+  // See the reduced-motion test above for why this is scoped to the hero
+  // section rather than an unqualified `.rise-in` — MobileNav's closed,
+  // `display:none` panel also carries the class and never completes its
+  // (paused) animation, which previously made `.first()` flake/timeout here.
+  const hero = page.locator('section[aria-labelledby="home-kicker"]');
+  const kicker = hero.locator('.rise-in').first();
   expect(await kicker.evaluate((el) => getComputedStyle(el).animationName)).toBe(
     'rise-in',
   );

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SUPPORT_EMAIL } from '@/lib/constants';
 
 const ABOUT_TITLE = 'About — analysis, not advice';
 const ABOUT_DESCRIPTION =
@@ -94,6 +94,24 @@ export default function AboutPage() {
             responsible gambling
           </Link>{' '}
           page. 18+.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Who runs this
+        </h2>
+        <p className="text-fg-dim">
+          {SITE_NAME} publishes football analysis, not betting tips, and takes
+          no side on any match. For anything not covered on this site —
+          feedback, data requests, corrections — email us at{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="text-green underline transition-colors hover:text-green-bright"
+          >
+            {SUPPORT_EMAIL}
+          </a>
+          .
         </p>
       </section>
     </article>

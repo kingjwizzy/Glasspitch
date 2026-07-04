@@ -49,7 +49,7 @@ test('the footer links to /privacy, /terms, and /refunds from the home page', as
   await expect(footer.getByRole('link', { name: 'Refunds' })).toHaveAttribute('href', '/refunds');
 });
 
-test('/terms names the £4/month and £29/year pricing and links to /refunds', async ({ page }) => {
+test('/terms names the £6/month and £39/year pricing and links to /refunds', async ({ page }) => {
   await page.goto('/terms', { waitUntil: 'load' });
   await expect(page.getByText('£6/month or £39/year')).toBeVisible();
   // Scoped to the article body -- the footer ALSO has a "Refunds" link, and

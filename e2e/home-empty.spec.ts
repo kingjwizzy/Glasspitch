@@ -76,12 +76,17 @@ test('/ (empty) keeps the page skeleton: 8 sections, one sign-up end-cap, discla
   await page.goto(`${EMPTY_HOME_URL}/`, { waitUntil: 'load' });
 
   await expectLandmarksAndCompliance(page);
-  // 8 = the W4 seven + the W6 World Cup chances section. (That slot has no
-  // preview hatch — it renders from the REAL `tournament_chances` table in
-  // whichever state it holds; see the dedicated chances-slot test below. The
-  // section itself is always present, so the count is state-independent.)
-  await expect(page.locator('section[aria-labelledby]')).toHaveCount(8);
-  await expect(page.locator('h1')).toHaveText('Football analysis you can check');
+  // 10 = the W4 seven + the W6 World Cup chances section + the audit-fix
+  // "Beat the model" and "Want more depth?" premium-mention sections. (The
+  // chances slot has no preview hatch — it renders from the REAL
+  // `tournament_chances` table in whichever state it holds; see the
+  // dedicated chances-slot test below. Every section itself is always
+  // present regardless of data state, so the count is state-independent.)
+  await expect(page.locator('section[aria-labelledby]')).toHaveCount(10);
+  // WC-window SEO (audit #10): the h1 is temporarily World-Cup-specific while
+  // the tournament is live/imminent — revert to "Football analysis you can
+  // check" once it reverts in source (see src/app/page.tsx's HOME_TITLE note).
+  await expect(page.locator('h1')).toHaveText('World Cup 2026 predictions you can check');
 
   // Exactly one sign-up affordance, even with nothing to show.
   await expect(page.getByRole('link', { name: 'Create a free account' })).toHaveCount(1);

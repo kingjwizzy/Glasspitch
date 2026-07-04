@@ -82,12 +82,6 @@ export default function RefundsPage() {
           the model predicts.
         </p>
       </section>
-
-      <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
-        Draft pending professional (legal) review — this page has not yet been
-        signed off and should not be relied on as final before that review
-        completes.
-      </p>
     </article>
   );
 }

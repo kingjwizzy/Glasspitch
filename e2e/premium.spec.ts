@@ -40,13 +40,29 @@ test('/premium states both locked prices plainly', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'Glass Pitch Premium' })).toBeVisible();
 
+  // The price + cadence render as their own line ABOVE each button (audit
+  // fix #5/#16/#24) -- stated plainly, no "starting from", no hidden/
+  // asterisked fees.
+  await expect(page.getByText('£6', { exact: true })).toBeVisible();
+  await expect(page.getByText('per month', { exact: true })).toBeVisible();
+  await expect(page.getByText('£39', { exact: true })).toBeVisible();
+  await expect(page.getByText('per year', { exact: true })).toBeVisible();
+
   // The two Checkout buttons ARE the page's one quiet upgrade affordance
-  // (DESIGN.md §6: no more than one per page) -- both prices stated plainly,
-  // no "starting from", no hidden/asterisked fees.
-  await expect(page.getByRole('button', { name: /£6/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /per month/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /£39/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /per year/ })).toBeVisible();
+  // (DESIGN.md §6: no more than one per page). Each button's accessible NAME
+  // is now a verb + price label ("Start monthly · £6/mo" / "Start annual ·
+  // £39/yr") -- a solid, unmistakably-clickable CTA, not a plain price
+  // restated as the button name.
+  const monthly = page.getByRole('button', { name: /Start monthly/ });
+  await expect(monthly).toBeVisible();
+  await expect(monthly).toHaveAccessibleName(/£6\/mo/);
+  const annual = page.getByRole('button', { name: /Start annual/ });
+  await expect(annual).toBeVisible();
+  await expect(annual).toHaveAccessibleName(/£39\/yr/);
+
+  // Annual is the emphasised/default plan, with a real, calculable saving
+  // badge (no fake "was £X" strike price, no countdown).
+  await expect(page.getByText(/Save 46%/)).toBeVisible();
 });
 
 test('/premium states plainly that the ledger and every prediction stay free forever', async ({

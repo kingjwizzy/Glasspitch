@@ -9,13 +9,14 @@ import FormChips from '@/components/match/FormChips';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import DeeperReadCallout from '@/components/match/DeeperReadCallout';
 import InsightsPanel from '@/components/match/InsightsPanel';
+import ShareRow from '@/components/ShareRow';
 import { getMatchData, type MatchData } from '@/lib/queries/match';
 import {
   getOpenMatchFixtureId,
   getOpenMatchInsights,
 } from '@/lib/queries/openMatch';
-import { formatDateShort, templateRead } from '@/lib/format';
-import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
+import { favoured, formatDateShort, outcomeName, pct, scoreLine, templateRead } from '@/lib/format';
+import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so a match
@@ -120,6 +121,46 @@ function eventJsonLd(data: MatchData) {
   return json;
 }
 
+/** Honest, plain-names share text for this fixture's call (audit #9) — the
+ *  scored receipt once a result exists, otherwise the pre-match call, or null
+ *  when there is nothing displayable to share (no prediction, or voided —
+ *  §9/§10 never present a voided call as ours). Sharing a receipt reuses the
+ *  exact same argmax/labelling helpers as ScoredResult/PredictionPanel so the
+ *  shared line can never drift from what the page itself shows. */
+function buildShareText(data: MatchData): string | null {
+  const { prediction } = data;
+  if (!prediction) return null;
+
+  const probs = {
+    home: prediction.prob_home,
+    draw: prediction.prob_draw,
+    away: prediction.prob_away,
+  };
+  const pick = favoured(probs);
+  const pickName = outcomeName(pick.key, data.home, data.away);
+  const pickPct = pct(pick.prob);
+
+  const isScored =
+    prediction.status === 'scored' &&
+    prediction.result !== null &&
+    data.final_home_goals !== null &&
+    data.final_away_goals !== null;
+
+  if (isScored) {
+    const hit = pick.key === prediction.result;
+    const actual = scoreLine(data.final_home_goals!, data.final_away_goals!);
+    return `${SITE_NAME}'s call for ${data.home} v ${data.away}: ${pickName} at ${pickPct}. It finished ${actual} — ${
+      hit ? 'a correct call' : 'a missed call'
+    }, logged forever on the public ledger.`;
+  }
+
+  const predictedScore = scoreLine(
+    prediction.predicted_home_goals,
+    prediction.predicted_away_goals,
+  );
+  return `${SITE_NAME}'s call for ${data.home} v ${data.away}: ${pickName} at ${pickPct}, ${predictedScore} predicted. Locked at kickoff, scored on the public ledger either way.`;
+}
+
 export default async function MatchPage({ params }: MatchPageProps) {
   const { id } = await params;
   const data = await getMatchData(parseId(id));
@@ -154,6 +195,7 @@ export default async function MatchPage({ params }: MatchPageProps) {
     : null;
 
   const hasForm = data.homeForm.length > 0 || data.awayForm.length > 0;
+  const shareText = buildShareText(data);
 
   const breadcrumb = breadcrumbJsonLd([
     ...(data.league && data.leagueSlug
@@ -233,6 +275,17 @@ export default async function MatchPage({ params }: MatchPageProps) {
         <section aria-labelledby="read-heading">
           <SectionHeader id="read-heading" title="The pre-match read" />
           <p className="text-sm leading-relaxed text-fg-dim">{read}</p>
+        </section>
+      )}
+
+      {shareText && (
+        <section aria-labelledby="share-heading">
+          <SectionHeader id="share-heading" title="Share this call" />
+          <ShareRow
+            text={shareText}
+            url={`${SITE_URL}/match/${data.id}`}
+            title={`${data.home} v ${data.away}`}
+          />
         </section>
       )}
 

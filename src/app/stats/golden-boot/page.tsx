@@ -56,16 +56,55 @@ export default async function GoldenBootPage() {
           Top-scorer standings appear once the data pipeline first runs.
         </p>
       ) : (
-        <div
-          // Horizontally scrollable on narrow viewports, so keyboard users
-          // need to be able to focus and scroll it (axe
-          // scrollable-region-focusable); the global :focus-visible ring
-          // marks it, and the region name mirrors the table caption.
-          role="region"
-          aria-label="Top 15 goalscorers, ranked"
-          tabIndex={0}
-          className="overflow-x-auto rounded-xl border border-line bg-surface"
-        >
+        <>
+          {/* Below sm: one stacked card per player — Goals is the headline
+              number (the whole point of the page was being clipped
+              off-screen with no scroll cue on a 393px phone, audit #10/#13/
+              #14), Assists sits right beside it, and the nation flag folds
+              into the player cell instead of a separate column. The sm+
+              table below is unchanged. */}
+          <ol
+            aria-label="Top 15 goalscorers, ranked"
+            className="divide-y divide-line rounded-xl border border-line bg-surface px-4 sm:hidden"
+          >
+            {scorers.map((s) => (
+              <li key={`${s.rank}-${s.playerName}`} className="flex items-center gap-3 py-3.5">
+                <span className="w-5 shrink-0 font-mono text-sm text-fg-dim" aria-hidden="true">
+                  {s.rank}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1.5 text-[15px] font-medium text-fg">
+                    {s.nationality && (
+                      <NationalityFlag nationality={s.nationality} className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{s.playerName}</span>
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-fg-dim">
+                    {s.teamName}
+                    {s.nationality ? ` · ${s.nationality}` : ''}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-mono text-2xl font-semibold text-fg">{s.goals}</p>
+                  <p className="text-[11px] text-fg-dim">
+                    {s.goals === 1 ? 'goal' : 'goals'} ·{' '}
+                    <span className="font-mono text-fg-dim">{s.assists ?? '—'}</span> ast
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          <div
+            // Horizontally scrollable on narrow viewports, so keyboard users
+            // need to be able to focus and scroll it (axe
+            // scrollable-region-focusable); the global :focus-visible ring
+            // marks it, and the region name mirrors the table caption.
+            role="region"
+            aria-label="Top 15 goalscorers, ranked"
+            tabIndex={0}
+            className="hidden overflow-x-auto rounded-xl border border-line bg-surface sm:block"
+          >
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Top 15 goalscorers, ranked</caption>
             <thead>
@@ -116,7 +155,8 @@ export default async function GoldenBootPage() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       <p className="text-xs leading-relaxed text-fg-dim">

@@ -6,6 +6,7 @@ import SectionHeader from '@/components/SectionHeader';
 import FixtureList from '@/components/FixtureList';
 import LedgerCallout from '@/components/match/LedgerCallout';
 import { getLeagueData, getAllLeagueSlugs } from '@/lib/queries/league';
+import type { FixtureRowView } from '@/lib/queries/fixtures';
 import { ANALYSIS_NOT_ADVICE, SITE_NAME } from '@/lib/constants';
 import { breadcrumbJsonLd, jsonLdScript } from '@/lib/jsonld';
 
@@ -63,12 +64,31 @@ export async function generateMetadata({
   };
 }
 
+/** Every distinct team appearing in this league's fixtures, name + slug,
+ *  de-duplicated and alphabetised. Derived from data the page already holds
+ *  (no extra DB read) — lets the league page cross-link to /team/[slug] pages
+ *  that otherwise have no path leading to them (audit finding: orphaned team
+ *  pages). Only ever includes teams whose slug actually resolves — a fixture
+ *  row with a missing slug is silently dropped rather than rendering a
+ *  broken link. */
+function leagueTeams(fixtures: FixtureRowView[]): { name: string; slug: string }[] {
+  const bySlug = new Map<string, string>();
+  for (const f of fixtures) {
+    if (f.homeSlug) bySlug.set(f.homeSlug, f.home);
+    if (f.awaySlug) bySlug.set(f.awaySlug, f.away);
+  }
+  return Array.from(bySlug, ([slug, name]) => ({ name, slug })).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+}
+
 export default async function LeaguePage({ params }: LeaguePageProps) {
   const { slug } = await params;
   const data = await getLeagueData(slug);
   if (!data) notFound();
 
   const { name, country, season, upcoming, recent, record } = data;
+  const teams = leagueTeams([...upcoming, ...recent]);
   const breadcrumb = breadcrumbJsonLd([{ name, url: `/league/${slug}` }]);
 
   // Minimal SportsEvent JSON-LD for the tournament — plain names only, no
@@ -161,6 +181,28 @@ export default async function LeaguePage({ params }: LeaguePageProps) {
           emptyMessage="No results in our record yet — predictions appear here once they're published and scored."
         />
       </section>
+
+      {/* Cross-links every team in this competition to its own /team/[slug]
+          page (audit finding: team pages exist but nothing links to them) —
+          derived from the fixtures already loaded above, so every link
+          resolves. */}
+      {teams.length > 0 && (
+        <section aria-labelledby="teams-heading">
+          <SectionHeader id="teams-heading" title="Teams in this competition" />
+          <ul className="flex flex-wrap gap-2">
+            {teams.map((t) => (
+              <li key={t.slug}>
+                <Link
+                  href={`/team/${t.slug}`}
+                  className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-3.5 text-sm text-fg transition-colors hover:bg-surface-2"
+                >
+                  {t.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <LedgerCallout />
 

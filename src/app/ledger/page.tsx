@@ -79,6 +79,19 @@ export default async function LedgerPage() {
           </Link>{' '}
           for exactly how these numbers are computed.
         </p>
+        <p className="mt-3 max-w-prose text-sm leading-relaxed text-fg-dim">
+          And you don&rsquo;t have to take our word for it — every scored call
+          is sealed into a public{' '}
+          <Link
+            href="/methodology#hash-chain"
+            className="text-green underline transition-colors hover:text-green-bright"
+          >
+            SHA-256 hash chain
+          </Link>
+          , each row locking the one before it, so any change to a past result
+          breaks the chain in a way anyone can check. Tamper-evident, not just
+          promised.
+        </p>
       </header>
 
       {!hasRecord ? (

@@ -107,63 +107,105 @@ export default async function TickerPage() {
       {teams.length === 0 ? (
         <EmptyTicker />
       ) : (
-        <div className="glass overflow-x-auto px-4 py-1">
-          <table className="w-full min-w-[26rem] text-sm">
-            <thead>
-              <tr className="text-left text-xs text-fg-dim">
-                <th scope="col" className="py-2.5 pr-3 font-normal">
-                  Team
-                </th>
-                {Array.from({ length: columns }).map((_, i) => (
-                  <th key={i} scope="col" className="py-2.5 pr-2 font-normal">
-                    {i === 0 ? 'Next match' : `Then +${i}`}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {teams.map((t) => (
-                <tr key={t.teamId}>
-                  <td className="py-3 pr-3 align-top">
-                    <span className="flex items-center gap-2 text-[15px] font-medium text-fg">
-                      <TeamFlag name={t.team} />
-                      {t.team}
-                    </span>
-                  </td>
-                  {Array.from({ length: columns }).map((_, i) => {
-                    const cell = t.cells[i];
-                    if (!cell) {
-                      return (
-                        <td key={i} className="py-3 pr-2 align-top">
-                          <span className="font-mono text-xs text-fg-faint">—</span>
-                        </td>
-                      );
-                    }
+        <div className="glass px-4 py-1">
+          {/* Below sm: each team's upcoming fixtures wrap into a vertical
+              stack of the same difficulty chips, instead of a fixed-width
+              table row — the table's hard-coded min-width otherwise forced
+              horizontal scroll with no cue on a 393px phone, clipping
+              fixtures off-screen (audit #10/#13/#14). The sm+ column table
+              below is unchanged. */}
+          <ul className="divide-y divide-line sm:hidden">
+            {teams.map((t) => (
+              <li key={t.teamId} className="py-3.5">
+                <span className="flex items-center gap-2 text-[15px] font-medium text-fg">
+                  <TeamFlag name={t.team} />
+                  {t.team}
+                </span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {t.cells.map((cell) => {
                     const difficulty = difficultyOf(cell.probWin);
                     return (
-                      <td key={cell.fixtureId} className="py-3 pr-2 align-top">
-                        <Link
-                          href={`/match/${cell.fixtureId}`}
-                          aria-label={`${cell.isHome ? 'Versus' : 'At'} ${cell.opponent}, difficulty ${difficulty} of 5 (${DIFFICULTY_LABEL[difficulty]}), win probability ${pct(cell.probWin)}`}
-                          className={`inline-flex min-h-11 min-w-28 flex-col justify-center rounded-lg border-l-4 ${DIFFICULTY_STYLE[difficulty]} border border-line bg-surface px-2.5 py-1.5 transition-colors hover:bg-surface-2`}
+                      <Link
+                        key={cell.fixtureId}
+                        href={`/match/${cell.fixtureId}`}
+                        aria-label={`${cell.isHome ? 'Versus' : 'At'} ${cell.opponent}, difficulty ${difficulty} of 5 (${DIFFICULTY_LABEL[difficulty]}), win probability ${pct(cell.probWin)}`}
+                        className={`inline-flex min-h-11 min-w-28 flex-col justify-center rounded-lg border-l-4 ${DIFFICULTY_STYLE[difficulty]} border border-line bg-surface px-2.5 py-1.5 transition-colors hover:bg-surface-2`}
+                      >
+                        <span className="truncate text-[13px] text-fg">
+                          {cell.isHome ? 'v' : 'at'} {cell.opponent}
+                        </span>
+                        <span
+                          aria-hidden="true"
+                          className="mt-0.5 font-mono text-[11px] text-fg-dim"
                         >
-                          <span className="truncate text-[13px] text-fg">
-                            {cell.isHome ? 'v' : 'at'} {cell.opponent}
-                          </span>
-                          <span
-                            aria-hidden="true"
-                            className="mt-0.5 font-mono text-[11px] text-fg-dim"
-                          >
-                            D{difficulty} · win {pct(cell.probWin)}
-                          </span>
-                        </Link>
-                      </td>
+                          D{difficulty} · win {pct(cell.probWin)}
+                        </span>
+                      </Link>
                     );
                   })}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[26rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-fg-dim">
+                  <th scope="col" className="py-2.5 pr-3 font-normal">
+                    Team
+                  </th>
+                  {Array.from({ length: columns }).map((_, i) => (
+                    <th key={i} scope="col" className="py-2.5 pr-2 font-normal">
+                      {i === 0 ? 'Next match' : `Then +${i}`}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {teams.map((t) => (
+                  <tr key={t.teamId}>
+                    <td className="py-3 pr-3 align-top">
+                      <span className="flex items-center gap-2 text-[15px] font-medium text-fg">
+                        <TeamFlag name={t.team} />
+                        {t.team}
+                      </span>
+                    </td>
+                    {Array.from({ length: columns }).map((_, i) => {
+                      const cell = t.cells[i];
+                      if (!cell) {
+                        return (
+                          <td key={i} className="py-3 pr-2 align-top">
+                            <span className="font-mono text-xs text-fg-faint">—</span>
+                          </td>
+                        );
+                      }
+                      const difficulty = difficultyOf(cell.probWin);
+                      return (
+                        <td key={cell.fixtureId} className="py-3 pr-2 align-top">
+                          <Link
+                            href={`/match/${cell.fixtureId}`}
+                            aria-label={`${cell.isHome ? 'Versus' : 'At'} ${cell.opponent}, difficulty ${difficulty} of 5 (${DIFFICULTY_LABEL[difficulty]}), win probability ${pct(cell.probWin)}`}
+                            className={`inline-flex min-h-11 min-w-28 flex-col justify-center rounded-lg border-l-4 ${DIFFICULTY_STYLE[difficulty]} border border-line bg-surface px-2.5 py-1.5 transition-colors hover:bg-surface-2`}
+                          >
+                            <span className="truncate text-[13px] text-fg">
+                              {cell.isHome ? 'v' : 'at'} {cell.opponent}
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className="mt-0.5 font-mono text-[11px] text-fg-dim"
+                            >
+                              D{difficulty} · win {pct(cell.probWin)}
+                            </span>
+                          </Link>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -31,7 +31,7 @@ function MoveTick({ delta }: { delta: number | null }) {
   if (delta === null) return null;
   const pp = Math.abs(delta * 100).toFixed(1);
   if (Math.abs(delta) < 0.0005) {
-    return <span className="font-mono text-[11px] text-fg-faint">0.0</span>;
+    return <span className="font-mono text-[11px] text-fg-dim">0.0</span>;
   }
   const up = delta > 0;
   return (

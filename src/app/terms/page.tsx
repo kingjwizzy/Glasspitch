@@ -113,12 +113,6 @@ export default function TermsPage() {
           {SUPPORT_EMAIL}
         </a>
       </p>
-
-      <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
-        Draft pending professional (legal) review — this page has not yet been
-        signed off and should not be relied on as final before that review
-        completes.
-      </p>
     </article>
   );
 }

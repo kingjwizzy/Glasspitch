@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import AdSlot from '@/components/AdSlot';
 import SectionHeader from '@/components/SectionHeader';
 import StadiumHero from '@/components/art/StadiumHero';
@@ -13,20 +14,31 @@ import RecentCalls from '@/components/home/RecentCalls';
 import RecordBand from '@/components/home/RecordBand';
 import GoldenBootRace from '@/components/home/GoldenBootRace';
 import SignupCard from '@/components/home/SignupCard';
+import ShareRow from '@/components/ShareRow';
+import { ArrowRightIcon } from '@/components/icons';
 import { getHomepageData } from '@/lib/queries/homepage';
 import { getGoldenBootTop5 } from '@/lib/queries/goldenBoot';
 import { getChancesData } from '@/lib/queries/chances';
 import { formatFullDate, formatTimeUtc, updatedStamp, utcDateKey } from '@/lib/format';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SITE_URL } from '@/lib/constants';
 
 // `title.template` (`%s · Glass Pitch`, defined in the root layout) applies only
 // to CHILD segments, never to the home page itself — so the page needs an
 // explicit, branded title to match the "· Glass Pitch" pattern the other routes
 // get for free. `absolute` bypasses the template (belt-and-braces against any
 // double-suffix). (ARCHITECTURE.md §11)
-const HOME_TITLE = `Transparent football analysis · ${SITE_NAME}`;
+//
+// WC-WINDOW SEO (audit #10): "World Cup 2026" is front-loaded into the title,
+// description and <h1> below while the tournament is live/imminent (final
+// 2026-07-19) — the highest-intent search terms right now. REVERT to the
+// evergreen, competition-agnostic copy (commented alongside each) once the
+// tournament ends in August — Glass Pitch covers more than one competition.
+const HOME_TITLE = `World Cup 2026 predictions & analysis · ${SITE_NAME}`;
+// const HOME_TITLE = `Transparent football analysis · ${SITE_NAME}`; // evergreen — restore in August
 const HOME_DESCRIPTION =
-  'Home, draw and away probabilities and predicted scores for upcoming matches — analysis, not advice. Every call is locked at kickoff and scored in a permanent public ledger.';
+  'World Cup 2026 predictions: home, draw and away probabilities and predicted scores for every match — analysis, not advice. Every call is locked at kickoff and scored in a permanent public ledger.';
+// const HOME_DESCRIPTION =
+//   'Home, draw and away probabilities and predicted scores for upcoming matches — analysis, not advice. Every call is locked at kickoff and scored in a permanent public ledger.'; // evergreen — restore in August
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE },
@@ -95,7 +107,9 @@ export default async function HomePage() {
             id="home-kicker"
             className="font-display text-[22px] font-semibold tracking-tight text-fg lg:text-[28px]"
           >
-            Football analysis you can check
+            {/* WC-window h1 (see HOME_TITLE note above) — revert to "Football
+                analysis you can check" once the tournament ends in August. */}
+            World Cup 2026 predictions you can check
           </h1>
           <p className="mt-1 max-w-[38ch] text-fg-dim">
             Every call locked at kickoff, scored either way.
@@ -178,6 +192,30 @@ export default async function HomePage() {
         <WhatWeAreWatching fixtures={watching} />
       </section>
 
+      {/* ── Beat the model — the free prediction game, given a first-class
+          body surface instead of living only in nav/footer (audit #8/#22:
+          the viral loop was orphaned). Plain CTA, no scarcity, no streaks. ── */}
+      <section aria-labelledby="play-heading" className="reveal">
+        <SectionHeader
+          id="play-heading"
+          title="Beat the model — free to play"
+          description="Call each fixture yourself before kickoff, Brier-scored exactly like our own ledger."
+        />
+        <div className="glass flex flex-col items-start gap-4 p-6 sm:flex-row sm:items-center sm:justify-between lg:p-8">
+          <p className="max-w-[46ch] text-sm text-fg-dim">
+            Free and prize-free, always — track your own record against the
+            model&rsquo;s.
+          </p>
+          <Link
+            href="/play"
+            className="inline-flex min-h-11 shrink-0 items-center justify-center gap-1 rounded-lg bg-green px-5 text-sm font-medium text-bg transition-colors hover:bg-green-bright"
+          >
+            Make your first call
+            <ArrowRightIcon className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      </section>
+
       {/* ── Receipts beside the Golden Boot — the 7/5 band (W4 §4–§5).
           DOM order = reading order: trust content first. ─────────────────── */}
       <div className="grid gap-10 lg:grid-cols-12 lg:gap-8">
@@ -190,6 +228,16 @@ export default async function HomePage() {
             linkLabel="Full record"
           />
           <RecentCalls calls={recentCalls} />
+          {/* Share loop (audit #9) — honest, subtle; only offered once there's
+              an actual record to point at. */}
+          {recentCalls.length > 0 && (
+            <ShareRow
+              className="mt-4"
+              url={`${SITE_URL}/ledger`}
+              title="Glass Pitch — the scored prediction ledger"
+              text="Glass Pitch called it — see the scored record, misses included."
+            />
+          )}
         </section>
 
         <section aria-labelledby="golden-boot-heading" className="reveal lg:col-span-5">
@@ -206,6 +254,30 @@ export default async function HomePage() {
       {/* ── The record band — accountability end-cap (W4 §6). ────────────── */}
       <section aria-labelledby="record-heading" className="reveal">
         <RecordBand record={record} />
+      </section>
+
+      {/* ── The one quiet premium mention in the page body (audit #18;
+          DESIGN.md §6: exactly one, plain, no pressure) — placed right after
+          the record so the context is obvious: premium adds depth around the
+          record, it never changes it or the free calls. ───────────────────── */}
+      <section aria-labelledby="premium-heading" className="reveal">
+        <div className="mx-auto max-w-xl rounded-xl border border-line bg-surface px-5 py-4 text-center">
+          <h2 id="premium-heading" className="text-sm font-medium text-fg">
+            Want more depth?
+          </h2>
+          <p className="mt-1 text-sm leading-relaxed text-fg-dim">
+            Premium adds prediction detail, post-match stats, and ledger
+            export/filters — the record above and every prediction stay free,
+            always.
+          </p>
+          <Link
+            href="/premium"
+            className="mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-green transition-colors hover:text-green-bright"
+          >
+            See what&rsquo;s included
+            <ArrowRightIcon className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </section>
 
       {/* ── The single sign-up affordance in the page body (W4 §7). ──────── */}

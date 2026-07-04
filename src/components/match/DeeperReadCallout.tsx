@@ -18,9 +18,9 @@ export default function DeeperReadCallout({ fixtureId }: { fixtureId: number }) 
         Deeper read
       </h2>
       <p className="rounded-xl border border-line bg-surface px-4 py-3 text-sm leading-relaxed text-fg-dim">
-        Prediction detail and post-match stats for this fixture are part of
-        Glass Pitch Premium — the full ledger and every match&rsquo;s
-        probabilities stay free forever either way.{' '}
+        xG, shot quality and the full model breakdown for this fixture are
+        part of Glass Pitch Premium — the full ledger and every
+        match&rsquo;s probabilities stay free forever either way.{' '}
         <Link
           href={`/match/${fixtureId}/insights`}
           className="inline-flex min-h-11 items-center gap-1 font-medium text-green transition-colors hover:text-green-bright"

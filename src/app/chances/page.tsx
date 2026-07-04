@@ -1,13 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import SectionHeader from '@/components/SectionHeader';
-import ChancesCloud from '@/components/chances/ChancesCloud';
+import ShareRow from '@/components/ShareRow';
 import ChancesEmpty from '@/components/chances/ChancesEmpty';
 import ChancesProvenance from '@/components/chances/ChancesProvenance';
 import TeamFlag from '@/components/TeamFlag';
+import { flagCodeForTeam } from '@/lib/flags';
 import { getChancesData, type TeamChance } from '@/lib/queries/chances';
 import { pct } from '@/lib/format';
-import { SITE_NAME } from '@/lib/constants';
+import { SITE_NAME, SITE_URL } from '@/lib/constants';
 
 // /chances — World Cup chances, the owner's flagship concept (ROADMAP.md §4
 // item 7). PUBLIC + ISR: anon reads only, no cookies, no client JS — the
@@ -69,6 +70,92 @@ function movers(teams: TeamChance[], limit = 6): Array<TeamChance & { delta: num
     .slice(0, limit);
 }
 
+/**
+ * Circle sizing for the flagship cloud (audit #16 — encoding). AREA, not
+ * diameter, tracks probability (diameter ∝ √p) — the dataviz-correct
+ * encoding for a circle mark. The floor below is an AREA floor rather than a
+ * diameter floor: a diameter floor gets stretched by the √ into roughly a
+ * THIRD of the max diameter (~10% of its area), which is why a genuine
+ * near-0% nation used to render as a surprisingly large, brand-undercutting
+ * circle. A small area floor keeps a longshot reading as a longshot — while
+ * never vanishing entirely, so ranking still reads at a glance on mobile.
+ */
+const CLOUD_MAX_PX = 132;
+const CLOUD_MIN_PX = 14;
+const CLOUD_FLOOR_AREA_RATIO = 0.012; // ~1.2% of the favourite's area
+
+function circleDiameter(pWin: number, maxPWin: number): number {
+  if (maxPWin <= 0) return CLOUD_MIN_PX;
+  const areaRatio = Math.max(pWin / maxPWin, CLOUD_FLOOR_AREA_RATIO);
+  const px = Math.round(CLOUD_MAX_PX * Math.sqrt(areaRatio));
+  return Math.max(CLOUD_MIN_PX, Math.min(CLOUD_MAX_PX, px));
+}
+
+/** Flag disc at an arbitrary computed diameter — plain <img>, not TeamFlag
+ *  (which only ships fixed 18/28px sizes). Same degrade-to-initials contract
+ *  as TeamFlag: an unmapped team never renders a broken image, and the
+ *  plain-text name label underneath stays the real identifier (§13). */
+function CloudMark({ team, px }: { team: string; px: number }) {
+  const code = flagCodeForTeam(team);
+  const style = { width: px, height: px };
+  if (!code) {
+    return (
+      <span
+        aria-hidden="true"
+        style={style}
+        className="flex items-center justify-center rounded-full border border-line bg-surface-2 font-display font-semibold text-fg-dim"
+      >
+        {team.slice(0, 3).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`/flags/${code}.svg`}
+      alt=""
+      aria-hidden="true"
+      width={px}
+      height={px}
+      loading="lazy"
+      decoding="async"
+      style={style}
+      className="rounded-full"
+    />
+  );
+}
+
+/** The flagship circle cloud — every surviving nation, sized by AREA (see
+ *  above). Pure RSC + CSS, zero client JS (ARCHITECTURE.md §5/§8). Size is
+ *  never the only signal: the exact % is always printed under every circle,
+ *  with the day-over-day move beside it (DESIGN.md §2). */
+function ChanceCircles({ teams }: { teams: TeamChance[] }) {
+  if (teams.length === 0) return null;
+  const maxPWin = teams[0].pWin; // teams arrive pWin-descending (getChancesData)
+
+  return (
+    <ol className="flex flex-wrap items-end justify-center gap-x-5 gap-y-7 py-2">
+      {teams.map((t) => (
+        <li
+          key={t.teamId}
+          className="flex max-w-32 flex-col items-center gap-1.5 text-center"
+        >
+          <CloudMark team={t.team} px={circleDiameter(t.pWin, maxPWin)} />
+          <span className="max-w-full truncate text-[13px] leading-tight text-fg">
+            {t.team}
+          </span>
+          <span className="flex items-baseline gap-1.5">
+            <span className="font-mono text-sm font-medium text-fg">
+              {pct(t.pWin)}
+            </span>
+            <MoveFigure delta={t.delta} />
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export default async function ChancesPage() {
   const { snapshotDate, sims, teams, gone } = await getChancesData();
   const moved = movers(teams);
@@ -95,8 +182,17 @@ export default async function ChancesPage() {
             <h2 id="cloud-heading" className="sr-only">
               Chance of winning the tournament, by nation
             </h2>
-            <ChancesCloud teams={teams} />
+            <ChanceCircles teams={teams} />
             <ChancesProvenance sims={sims} snapshotDate={snapshotDate} />
+            {/* Share loop (audit #9) — the model's current favourite, honestly
+                framed; teams[0] is the top of the pWin-descending order. */}
+            <div className="mt-4 flex justify-center">
+              <ShareRow
+                url={`${SITE_URL}/chances`}
+                title="World Cup chances — Glass Pitch"
+                text={`Glass Pitch's model currently gives ${teams[0].team} the best chance of winning the World Cup — ${pct(teams[0].pWin)}.`}
+              />
+            </div>
           </section>
 
           {moved.length > 0 && (

@@ -59,7 +59,30 @@ export const metadata: Metadata = {
     title: `${SITE_NAME} — transparent football analysis`,
     description: DEFAULT_DESCRIPTION,
   },
-  robots: { index: true, follow: true },
+  // Site-default robots directives. `index`/`follow` stay the plain defaults;
+  // any route that needs noindex (premium/account/insights/login/etc.) sets
+  // its own full `robots` object, which fully replaces this one rather than
+  // merging with it — so those pages keep winning. The `googleBot` block adds
+  // Discover/rich-snippet eligibility (max image previews, no snippet/video
+  // length cap) without touching index/follow itself.
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
+  // Google Search Console domain-ownership verification. Populated purely via
+  // env — set GOOGLE_SITE_VERIFICATION in the deploy environment to verify;
+  // left unset, Next.js omits the meta tag entirely (no empty/placeholder tag
+  // ships when the owner hasn't verified yet).
+  verification: {
+    google: process.env.GOOGLE_SITE_VERIFICATION,
+  },
   // PWA-lite (DESIGN.md §8): installable, fast repeat loads. Icons themselves
   // are wired automatically by the app/icon.tsx + app/apple-icon.tsx file
   // conventions; this just points at the manifest.

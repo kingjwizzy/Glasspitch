@@ -37,6 +37,25 @@ export default function PrivacyPage() {
 
       <section className="space-y-2">
         <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Who&rsquo;s responsible for this data
+        </h2>
+        <p className="text-sm leading-relaxed text-fg-dim">
+          {SITE_NAME} is the data controller for the personal data described
+          in this notice — we decide why and how it&rsquo;s processed. Contact
+          us at{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="underline decoration-fg-dim/40 underline-offset-2 transition-colors hover:text-fg"
+          >
+            {SUPPORT_EMAIL}
+          </a>{' '}
+          about anything in this notice, including exercising the rights
+          below.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
           What we collect
         </h2>
         <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-fg-dim">
@@ -140,12 +159,6 @@ export default function PrivacyPage() {
           </a>
         </p>
       </section>
-
-      <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">
-        Draft pending professional (legal) review — this page has not yet been
-        signed off and should not be relied on as final before that review
-        completes.
-      </p>
     </article>
   );
 }

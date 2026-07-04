@@ -22,10 +22,34 @@ export default function Footer() {
             </li>
             <li>
               <Link
+                href="/methodology"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Methodology
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/ledger"
                 className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
               >
                 Track record
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/play"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                Beat the model
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/premium"
+                className="inline-flex min-h-11 items-center rounded-md px-2 transition-colors hover:text-fg"
+              >
+                What Premium adds
               </Link>
             </li>
             <li>

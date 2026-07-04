@@ -50,18 +50,27 @@ export default async function LeaguesPage() {
           No competitions in our record yet.
         </p>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2">
+        // A single full-width bordered list (mirrors FixtureList) rather than a
+        // grid of fixed-size cards: with only one tracked competition today, a
+        // small card floating at the top of a wide desktop viewport reads as
+        // broken; a full-width row never looks sparse, whether there's one
+        // competition or many (fixes the "80%-blank desktop" audit finding).
+        <ul className="divide-y divide-line rounded-xl border border-line bg-surface px-2">
           {leagues.map((l) => (
             <li key={l.slug}>
               <Link
                 href={`/league/${l.slug}`}
-                className="flex min-h-11 flex-col gap-1 rounded-2xl border border-line bg-surface p-4 transition-colors hover:bg-surface-2"
+                className="flex min-h-11 items-center justify-between gap-3 rounded-lg px-2 py-4 transition-colors hover:bg-surface-2"
               >
-                <span className="text-sm font-medium text-fg">{l.name}</span>
-                <span className="text-xs text-fg-dim">
-                  {l.country} · {l.season}
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-fg">
+                    {l.name}
+                  </span>
+                  <span className="block text-xs text-fg-dim">
+                    {l.country} · {l.season}
+                  </span>
                 </span>
-                <span className="mt-1 font-mono text-xs text-fg-dim">
+                <span className="shrink-0 font-mono text-xs text-fg-dim">
                   {l.fixtureCount} {l.fixtureCount === 1 ? 'fixture' : 'fixtures'}
                 </span>
               </Link>

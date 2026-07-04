@@ -73,7 +73,7 @@ export default defineConfig({
         // build's .env.local points at.
         PREVIEW_MATCHES: '1',
         // v2 premium (e2e/premium.spec.ts): fake-but-well-formed test-mode
-        // values so /premium renders its REAL £4/£29 Checkout buttons instead
+        // values so /premium renders its REAL £6/£39 Checkout buttons instead
         // of the "not switched on yet" fallback (src/lib/stripe/plans.ts's
         // plansConfigured() needs both price ids; the page's canCheckout also
         // needs a truthy STRIPE_SECRET_KEY). These are never used to make a

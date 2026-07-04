@@ -28,7 +28,21 @@ const STATUS_LABEL: Record<SubscriptionStatus, string> = {
   paused: 'Paused',
 };
 
-export default async function AccountPage() {
+interface AccountPageProps {
+  searchParams: Promise<{ checkout?: string; try?: string }>;
+}
+
+// Neutral link label for the "you don't have Premium" empty state (audit
+// #21) — never says "test mode" to a visitor; the not-yet-live phrasing is
+// simply different wording, not an internal-status disclosure.
+function premiumUpsellLabel(): string {
+  return process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1'
+    ? 'See what Premium adds'
+    : 'See what Premium includes';
+}
+
+export default async function AccountPage({ searchParams }: AccountPageProps) {
+  const { checkout, try: attemptParam } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -38,6 +52,22 @@ export default async function AccountPage() {
   const subscription = await getMySubscription(supabase, user.id);
   const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
   const isActive = subscription?.status === 'active';
+
+  // Bound the post-purchase auto-refresh: each reload increments ?try, and
+  // after ~15s (5 × 3s) we stop polling so a webhook that never lands (e.g. a
+  // wrong signing secret) can't loop the page forever — we point at support
+  // instead. The manual "refresh" link resets ?try, giving a fresh cycle.
+  const MAX_ACTIVATION_POLLS = 5;
+  const attempt = Number.parseInt(attemptParam ?? '', 10) || 0;
+
+  // Post-purchase optimism (audit #7): Checkout redirects here the instant
+  // Stripe confirms payment, but the `subscriptions` row only exists once the
+  // webhook has run — a race, not a failure. Showing the honest-but-bleak
+  // "you don't have a subscription" empty state in that window reads as
+  // "your payment didn't work", which it did. Bridge the gap with a
+  // reassuring, self-refreshing panel instead.
+  const awaitingActivation = checkout === 'success' && !subscription;
+  const keepPolling = awaitingActivation && attempt < MAX_ACTIVATION_POLLS;
 
   return (
     <article className="space-y-8">
@@ -56,7 +86,53 @@ export default async function AccountPage() {
           Glass Pitch Premium
         </h2>
 
-        {!subscription ? (
+        {awaitingActivation ? (
+          <div className="space-y-2 rounded-2xl border border-green/30 bg-green/10 p-5">
+            {/* React 19 hoists <meta>/<title>/<link> rendered anywhere in the
+                tree into the document <head> — this is a genuine meta refresh,
+                not a no-op. A plain-anchor manual fallback covers visitors
+                whose browser/extensions suppress it. Each auto-refresh bumps
+                ?try; we stop after MAX_ACTIVATION_POLLS so it can't loop
+                forever if the webhook never arrives. */}
+            {keepPolling ? (
+              <meta
+                httpEquiv="refresh"
+                content={`3;url=/account?checkout=success&try=${attempt + 1}`}
+              />
+            ) : null}
+            <p className="text-sm font-medium text-green-bright">
+              {keepPolling
+                ? 'Payment received — activating your Premium…'
+                : 'Payment received — still finalising your Premium'}
+            </p>
+            <p className="text-xs leading-relaxed text-fg-dim">
+              {keepPolling ? (
+                <>
+                  This usually takes just a few seconds. This page refreshes
+                  itself automatically, or{' '}
+                  <a href="/account?checkout=success" className="underline hover:text-fg">
+                    refresh now
+                  </a>
+                  .
+                </>
+              ) : (
+                <>
+                  This is taking longer than usual — your payment went through,
+                  so there&rsquo;s nothing more to pay. If Premium isn&rsquo;t
+                  active shortly,{' '}
+                  <a href="/account?checkout=success" className="underline hover:text-fg">
+                    refresh
+                  </a>{' '}
+                  or email{' '}
+                  <a href="mailto:support@glasspitch.com" className="underline hover:text-fg">
+                    support@glasspitch.com
+                  </a>
+                  .
+                </>
+              )}
+            </p>
+          </div>
+        ) : !subscription ? (
           <div className="rounded-2xl border border-line bg-surface p-5">
             <p className="text-sm leading-relaxed text-fg-dim">
               You don&rsquo;t have a Premium subscription. Every prediction and
@@ -65,7 +141,7 @@ export default async function AccountPage() {
                 href="/premium"
                 className="text-green underline transition-colors hover:text-green-bright"
               >
-                Premium — test mode preview
+                {premiumUpsellLabel()}
               </Link>
               .
             </p>

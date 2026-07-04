@@ -144,6 +144,33 @@ export default function MethodologyPage() {
         </p>
       </section>
 
+      <section id="hash-chain" className="space-y-2">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
+          Sealed with a hash chain
+        </h2>
+        <p className="text-sm leading-relaxed text-fg-dim">
+          The immutability trigger stops a scored row from being edited at
+          the database level — but that only matters if you can check it
+          from the outside, not just take our word for it. So every night, a
+          job reads every scored prediction, oldest to newest, and folds it
+          into a SHA-256 hash chain: each row&rsquo;s hash is computed from
+          its own data plus the hash of the row before it, all the way back
+          to a fixed starting point. Change, reorder or delete a single past
+          result — even one probability, even one digit — and every hash from
+          that point forward comes out different. The chain&rsquo;s current
+          tip is published on{' '}
+          <code className="font-mono text-fg">public.ledger_checkpoints</code>
+          , a plain, anon-readable table alongside the ledger itself, so
+          anyone can re-derive the same chain from our public data and
+          confirm it matches — no trust required, just arithmetic.
+          Tamper-evident, not just promised. See it applied on the{' '}
+          <Link href="/ledger" className="text-green underline transition-colors hover:text-green-bright">
+            ledger
+          </Link>
+          .
+        </p>
+      </section>
+
       <section className="space-y-2">
         <h2 className="font-display text-lg font-semibold tracking-tight text-fg">
           Audit any call yourself

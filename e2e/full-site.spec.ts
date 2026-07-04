@@ -54,11 +54,26 @@ for (const path of NEW_PAGES) {
 // cached public page can never branch on auth state, so "Sign in" is always a
 // static link to /login, which itself redirects an already-signed-in visitor
 // to /account.)
-test('primary nav shows Matches, Chances, Leagues, Play, and a static Sign in link to /login', async ({
+//
+// Audit fix #2 (CRITICAL): below md there is no room for seven inline links
+// on a phone-width viewport (a 393px Pixel 5 clipped the row to "Home | Ma…"),
+// so Header's inline `nav[aria-label="Primary"]` row is now `hidden md:flex`
+// and a below-md hamburger client island (src/components/MobileNav.tsx) takes
+// over instead. The two viewport projects therefore need two different
+// routes to the same seven destinations -- split into a desktop test (the
+// inline row, unchanged contract) and a mobile test that actually opens the
+// hamburger dialog rather than asserting on a nav row this viewport
+// intentionally keeps invisible.
+test('primary nav (desktop) shows Matches, Chances, Leagues, Play, and a static Sign in link to /login', async ({
   page,
-}) => {
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'desktop-only: below md the inline row is hidden — see the mobile hamburger test below',
+  );
   await page.goto('/', { waitUntil: 'load' });
   const primaryNav = page.locator('nav[aria-label="Primary"]');
+  await expect(primaryNav).toBeVisible();
   await expect(primaryNav.getByRole('link', { name: 'Matches', exact: true })).toHaveAttribute(
     'href',
     '/matches',
@@ -85,6 +100,90 @@ test('primary nav shows Matches, Chances, Leagues, Play, and a static Sign in li
     'href',
     '/login',
   );
+});
+
+// The seven NAV destinations MobileNav renders (mirrors Header's exported
+// `NAV`, kept literal here rather than imported so this spec independently
+// pins the full contract rather than trusting the same source it's testing).
+const MOBILE_NAV_LINKS = [
+  { name: 'Home', href: '/' },
+  { name: 'Matches', href: '/matches' },
+  { name: 'Chances', href: '/chances' },
+  { name: 'Leagues', href: '/leagues' },
+  { name: 'Play', href: '/play' },
+  { name: 'Track record', href: '/ledger' },
+  { name: 'About', href: '/about' },
+] as const;
+
+test('primary nav (mobile): the hamburger opens a dialog reaching all 7 destinations plus Sign in', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'mobile-only: exercises the below-md MobileNav hamburger',
+  );
+  await page.goto('/', { waitUntil: 'load' });
+
+  // The inline row stays in the DOM (aria-controls keeps pointing at a real
+  // element) but is not visible at this viewport — the hamburger toggle is
+  // the reachable affordance instead.
+  const primaryNav = page.locator('nav[aria-label="Primary"]');
+  await expect(primaryNav).toBeHidden();
+
+  // The toggle button is identified by its `aria-controls` link to the
+  // panel's id, not by its accessible name: that name flips between "Open
+  // menu" / "Close menu" as it opens and closes (MobileNav.tsx), AND once
+  // open the panel's own dedicated close button also reads "Close menu" —
+  // matching by name alone is either stale or ambiguous. The panel element
+  // (a plain CSS attribute selector, so it resolves even while hidden/
+  // pre-open, unlike getByRole which excludes hidden elements) carries the
+  // real id `aria-controls` must reference.
+  const panel = page.locator('[role="dialog"][aria-label="Primary navigation"]');
+  const panelId = await panel.getAttribute('id');
+  const toggle = page.locator(`button[aria-controls="${panelId}"]`);
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAccessibleName('Open menu');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+  // Closed: no dialog is actually visible yet (MobileNav's panel stays
+  // parked in the DOM under `hidden`, out of the accessibility tree).
+  await expect(page.getByRole('dialog', { name: 'Primary navigation' })).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveAccessibleName('Close menu');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  const dialog = page.getByRole('dialog', { name: 'Primary navigation' });
+  await expect(dialog).toBeVisible();
+
+  // All 7 destinations plus "Sign in" are reachable inside the open panel.
+  for (const { name, href } of MOBILE_NAV_LINKS) {
+    await expect(dialog.getByRole('link', { name, exact: true })).toHaveAttribute('href', href);
+  }
+  await expect(dialog.getByRole('link', { name: 'Sign in', exact: true })).toHaveAttribute(
+    'href',
+    '/login',
+  );
+  // NEXT_PUBLIC_PREMIUM_LIVE is unset in this build, so "Go Premium" must not
+  // appear yet (env-gated — see src/components/MobileNav.tsx).
+  await expect(dialog.getByRole('link', { name: 'Go Premium' })).toHaveCount(0);
+
+  // A link click closes the panel and actually navigates.
+  await dialog.getByRole('link', { name: 'About', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/\/about$/);
+
+  // Re-open (same Header/MobileNav instance persists across the client
+  // navigation — the root layout doesn't remount), then Esc closes it and
+  // returns focus to the toggle. Checked as its own action (not chained onto
+  // the link-click navigation above) so Next.js's own post-navigation focus
+  // management can never be mistaken for — or mask — this component's own
+  // close-and-restore-focus behaviour.
+  await toggle.click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(toggle).toBeFocused();
 });
 
 // ── /matches (populated via PREVIEW_MATCHES=1) ──────────────────────────────
@@ -147,14 +246,20 @@ test('/methodology states the exact Brier and log-loss formulas', async ({ page 
 
 test('/methodology links through to /ledger and /matches', async ({ page }) => {
   await page.goto('/methodology', { waitUntil: 'load' });
-  // exact: true -- the "Audit any call yourself" section also has a separate
-  // "full ledger" link, and Playwright's default name matching is a
-  // case-insensitive substring match, so an unscoped "ledger" would resolve
-  // to both.
-  await expect(page.getByRole('link', { name: 'ledger', exact: true })).toHaveAttribute(
-    'href',
-    '/ledger',
-  );
+  // exact: true -- the "Audit any call yourself" section has a separate
+  // "full ledger" link (not an exact "ledger" match) and Playwright's default
+  // name matching is a case-insensitive substring match, so an unscoped
+  // "ledger" would resolve too broadly. The audit-fix "Sealed with a hash
+  // chain" section (#hash-chain) added a SECOND exact "ledger" link
+  // alongside the original one -- both point at the same destination, so
+  // assert every exact "ledger" link resolves to /ledger rather than picking
+  // one arbitrarily (this only strengthens the check: now covers 2 links).
+  const ledgerLinks = page.getByRole('link', { name: 'ledger', exact: true });
+  expect(await ledgerLinks.count()).toBeGreaterThanOrEqual(2);
+  const ledgerLinkCount = await ledgerLinks.count();
+  for (let i = 0; i < ledgerLinkCount; i++) {
+    await expect(ledgerLinks.nth(i)).toHaveAttribute('href', '/ledger');
+  }
   await expect(page.getByRole('link', { name: 'matches list' })).toHaveAttribute(
     'href',
     '/matches',

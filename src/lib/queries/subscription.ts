@@ -2,7 +2,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/database.types';
 import type { SubscriptionStatus } from '@/lib/types';
-import { planForPriceId } from '@/lib/stripe/plans';
+import { resolvePlanForPriceId } from '@/lib/stripe/plans';
 
 // /account's subscription read (ARCHITECTURE.md §7 v2 amendment). Goes
 // through the CALLER'S per-request, cookie-bound client — never the anon
@@ -43,7 +43,7 @@ export async function getMySubscription(
 
   return {
     status: data.status as SubscriptionStatus,
-    plan: planForPriceId(data.price_id),
+    plan: await resolvePlanForPriceId(data.price_id),
     currentPeriodEnd: data.current_period_end,
     cancelAtPeriodEnd: data.cancel_at_period_end,
     hasStripeCustomer: Boolean(data.stripe_customer_id),

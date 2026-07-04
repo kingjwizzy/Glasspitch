@@ -26,6 +26,41 @@ test('/match/1 (preview) still shows the quiet "Deeper read" premium line', asyn
   await expect(link).toHaveAttribute('href', '/match/1/insights');
 });
 
+// ── /match/1/insights, logged out: the paywall states the price + a Go
+// Premium CTA + a "already subscribe? sign in" escape hatch (audit fix #4 --
+// previously the price was missing for a logged-out visitor). Playwright
+// carries no auth cookies, so this dynamic route always renders its genuine
+// anonymous branch here -- no mocking needed. ───────────────────────────────
+test('/match/1/insights (logged out) states the price plainly with a Go Premium CTA and a sign-in escape hatch', async ({
+  page,
+}) => {
+  await page.goto('/match/1/insights', { waitUntil: 'load' });
+
+  await expect(page.getByRole('heading', { name: 'Deeper read', level: 1 })).toBeVisible();
+
+  const teaser = page.locator('section[aria-labelledby="teaser-heading"]');
+  await expect(teaser).toBeVisible();
+  await expect(teaser.getByText('£6/month or £39/year')).toBeVisible();
+  await expect(teaser.getByText(/stay free, forever, either way/i)).toBeVisible();
+
+  const goPremium = teaser.getByRole('link', { name: 'Go Premium' });
+  await expect(goPremium).toHaveAttribute('href', '/premium');
+
+  // Logged-out only: someone who already subscribes but isn't recognised on
+  // this device/browser gets an explicit way back to sign in, carrying the
+  // return path.
+  const signIn = teaser.getByRole('link', { name: /Already subscribe\? Sign in/ });
+  await expect(signIn).toHaveAttribute('href', '/login?next=/match/1/insights');
+
+  // Never a real fixture_insights read for a non-entitled viewer -- the
+  // mockup is a decorative, aria-hidden placeholder (never real fetched
+  // data), so it must still be present and reads unambiguously as a locked
+  // preview to sighted and screen-reader users alike.
+  const mock = teaser.locator('[aria-hidden="true"]').filter({ hasText: 'Expected goals' });
+  await expect(mock).toBeVisible();
+  await expect(teaser.getByText('A locked preview')).toBeVisible();
+});
+
 test.describe('public pages emit no Set-Cookie (cacheable; no auth side-effects)', () => {
   const PUBLIC_PATHS = ['/', '/match/1'] as const;
 

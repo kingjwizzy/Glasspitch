@@ -97,8 +97,15 @@ export default function ProofRail({
             ))}
           </ul>
           <p className="mt-3 text-sm text-fg-dim">
-            Every prediction is published before kickoff and locked at kickoff. The
-            ledger cannot be edited — not even by us.
+            Every prediction is published before kickoff and locked at
+            kickoff, then sealed into a public{' '}
+            <Link
+              href="/methodology#hash-chain"
+              className="text-green underline transition-colors hover:text-green-bright"
+            >
+              SHA-256 hash chain
+            </Link>{' '}
+            — tamper-evident, not just promised.
           </p>
         </div>
       ) : (
