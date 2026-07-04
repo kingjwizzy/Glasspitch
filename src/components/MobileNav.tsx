@@ -20,6 +20,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { CrossIcon } from '@/components/icons';
 import { NAV } from '@/components/Header';
+import { useAuthState } from '@/components/useAuthState';
 
 const PREMIUM_LIVE = process.env.NEXT_PUBLIC_PREMIUM_LIVE === '1';
 
@@ -42,6 +43,7 @@ function HamburgerIcon() {
 
 export default function MobileNav() {
   const [open, setOpen] = useState(false);
+  const signedIn = useAuthState() === 'in';
   const toggleRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -154,11 +156,11 @@ export default function MobileNav() {
             ) : null}
             <li className="mt-1 border-t border-line pt-1">
               <Link
-                href="/login"
+                href={signedIn ? '/account' : '/login'}
                 onClick={close}
                 className="flex min-h-11 items-center rounded-md px-2 text-base text-fg-dim transition-colors hover:bg-surface-2 hover:text-fg"
               >
-                Sign in
+                {signedIn ? 'Account' : 'Sign in'}
               </Link>
             </li>
           </ul>

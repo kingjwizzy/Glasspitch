@@ -9,7 +9,8 @@ import { ANALYSIS_NOT_ADVICE, DISCLAIMER, SITE_NAME } from '@/lib/constants';
 // LAYOUT ITSELF throws (vs. src/app/error.tsx, which handles everything else
 // and renders inside a working layout) — so, unlike every other page in this
 // lane, it must define its own <html>/<body> and cannot rely on the root
-// layout's Header/Footer/DisclaimerBanner having rendered. The disclaimer line
+// layout's Header/Footer (and the footer's compliance disclaimer) having
+// rendered. The disclaimer line
 // is restated verbatim here for exactly that reason: it must never depend on a
 // layout that just failed (ARCHITECTURE.md §13 — present on every page, no
 // exceptions).

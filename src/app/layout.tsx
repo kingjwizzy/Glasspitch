@@ -4,7 +4,6 @@ import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
-import DisclaimerBanner from '@/components/DisclaimerBanner';
 import { SITE_NAME, SITE_URL } from '@/lib/constants';
 import { jsonLdScript, organizationJsonLd, websiteJsonLd } from '@/lib/jsonld';
 
@@ -126,8 +125,10 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: jsonLdScript(websiteJsonLd()) }}
         />
-        {/* Persistent disclaimer on every page (ARCHITECTURE.md §13). */}
-        <DisclaimerBanner />
+        {/* The persistent compliance disclaimer (ARCHITECTURE.md §13) now lives
+            in the footer (Footer.tsx renders it as the labelled "Compliance
+            disclaimer" region), so it's still on every page but no longer a
+            banner above the fold. */}
         <Header />
         {/* W4: the shell widens to max-w-6xl at lg (header/main/footer together
             so edges align) and the home page composes a 12-col grid inside it. */}

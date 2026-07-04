@@ -1,14 +1,15 @@
 import Link from 'next/link';
 import MobileNav from '@/components/MobileNav';
+import AuthNav from '@/components/AuthNav';
 import { SITE_NAME } from '@/lib/constants';
 
-// Static Server Component — no "use client", no auth/session awareness (v3
-// amendment): the header is rendered by every public page, including cached
-// ISR pages, so it must never branch on signed-in state (that would force the
-// whole page dynamic). The "Sign in" link is a plain, static link to /login,
-// which itself redirects an already-signed-in visitor to /account
-// (src/middleware.ts) — so the header stays correct for every visitor without
-// ever reading a cookie itself.
+// Static Server Component — no "use client", no auth/session awareness: the
+// header is rendered by every public page, including cached ISR pages, so it
+// must never branch on signed-in state at render time (that would force the
+// whole page dynamic). The signed-in vs signed-out affordance is the ONE thing
+// that can't be static, so it's delegated to two tiny client islands —
+// <AuthNav /> (desktop) and MobileNav (below md) — that read the session on the
+// client and swap "Sign in" for "Account". Everything else here stays static.
 //
 // Exported so MobileNav — the below-md hamburger client island — renders the
 // same seven destinations from one source of truth instead of a duplicate list.
@@ -67,12 +68,7 @@ export default function Header() {
             Go Premium
           </Link>
         ) : null}
-        <Link
-          href="/login"
-          className="-ml-1 hidden min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-sm text-fg-dim transition-colors hover:text-fg md:inline-flex"
-        >
-          Sign in
-        </Link>
+        <AuthNav />
         <MobileNav />
       </div>
     </header>

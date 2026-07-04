@@ -8,7 +8,14 @@ export default function Footer() {
   return (
     <footer className="mt-auto border-t border-line bg-surface">
       <div className="mx-auto w-full max-w-screen-md px-4 py-7 text-sm lg:max-w-6xl">
-        <p className="font-medium text-fg">{DISCLAIMER}</p>
+        {/* The site-wide compliance disclaimer (ARCHITECTURE.md §13). It used to
+            sit in a banner above the header; it now lives here so the top of the
+            page stays clean, but it's still rendered on EVERY page (this footer
+            is in the root layout) and stays a labelled region so the compliance
+            e2e assertions keep passing. */}
+        <div role="region" aria-label="Compliance disclaimer">
+          <p className="font-medium text-fg">{DISCLAIMER}</p>
+        </div>
         <nav aria-label="Footer" className="mt-2">
           {/* ≥44px tap targets (DESIGN.md §4); -mx offset keeps the row flush. */}
           <ul className="-mx-2 flex flex-wrap gap-x-2 text-fg-dim">
