@@ -60,6 +60,35 @@ test('/login shows the magic-link email form and the required 18+ attestation', 
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
 });
 
+test('/login form submits and the server action returns state (no error boundary)', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+
+  await page.goto('/login', { waitUntil: 'load' });
+
+  // "foo@bar" passes the browser's type=email check (no TLD required) but fails
+  // the action's stricter EMAIL_RE (which requires a dot), so the server action
+  // runs and returns its validation state WITHOUT calling Supabase or sending
+  // an email. This exercises the useActionState <-> 'use server' round trip a
+  // GET render never triggers -- the exact path that 500'd into the error
+  // boundary when login/actions.ts illegally exported a non-function value
+  // ("A 'use server' file can only export async functions, found object").
+  await page.getByLabel('Email address').fill('foo@bar');
+  await page.locator('#is18').check();
+  await page.getByRole('button', { name: 'Send magic link' }).click();
+
+  // The action's own validation message proves it ran and returned state...
+  await expect(page.getByText('Enter a valid email address.')).toBeVisible();
+  // ...and the page did NOT fall into error.tsx ("Something went wrong").
+  await expect(page.getByText(/Something went wrong/i)).toHaveCount(0);
+  expect(errors, `runtime errors during submit: ${errors.join(' | ')}`).toEqual([]);
+});
+
 test('/login never shows dark-pattern urgency language', async ({ page }) => {
   await page.goto('/login', { waitUntil: 'load' });
   const bodyText = (await page.locator('body').innerText()).toLowerCase();

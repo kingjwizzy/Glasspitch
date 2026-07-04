@@ -9,13 +9,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { SITE_URL } from '@/lib/constants';
 import { safeNextPath } from '@/lib/auth/redirect';
+import type { LoginFormState } from './state';
 
-export interface LoginFormState {
-  status: 'idle' | 'sent' | 'error';
-  message: string;
-}
-
-export const INITIAL_LOGIN_STATE: LoginFormState = { status: 'idle', message: '' };
+// NOTE: a "use server" file can export ONLY async functions. The LoginFormState
+// type and the INITIAL_LOGIN_STATE object live in ./state.ts — exporting a
+// non-function value from here throws at runtime and crashes /login.
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

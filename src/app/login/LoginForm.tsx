@@ -7,7 +7,8 @@
 // server action (actions.ts), not here.
 
 import { useActionState } from 'react';
-import { INITIAL_LOGIN_STATE, sendMagicLink } from './actions';
+import { sendMagicLink } from './actions';
+import { INITIAL_LOGIN_STATE } from './state';
 
 export default function LoginForm({ next }: { next: string }) {
   const [state, formAction, pending] = useActionState(sendMagicLink, INITIAL_LOGIN_STATE);
