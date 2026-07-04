@@ -28,14 +28,18 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import BrierVerdictChip from '@/components/play/BrierVerdictChip';
 import ProbabilityBar from '@/components/ProbabilityBar';
 import ResultBadge from '@/components/ResultBadge';
+import ShareRow from '@/components/ShareRow';
 import TeamFlag from '@/components/TeamFlag';
 import {
   beatModelRead,
+  favoured,
   formatDateShort,
   metric3,
-  predictedPick,
+  outcomeName,
+  receiptRead,
   scoreLine,
 } from '@/lib/format';
+import { SITE_URL } from '@/lib/constants';
 import type { SettledPick } from '@/lib/queries/play';
 import type { MatchResult } from '@/lib/types';
 
@@ -106,6 +110,42 @@ export interface SettledPickRevealProps {
   pick: SettledPick;
 }
 
+/**
+ * Honest, plain-text share line for a settled "Beat the Model" pick (RAMBO
+ * wave 2 #1 — "the verifiable boast"). Built ONLY from `receiptRead` /
+ * `beatModelRead` — the exact same helpers this component renders on screen
+ * above (the "you" copy under the reveal, and the floodlit "you out-called
+ * the model" panel) — so the shared numbers can never drift from what's
+ * displayed. Hits and misses share at equal prominence: `receiptRead` is
+ * symmetric by construction, never hype, never a guarantee (DESIGN.md §6).
+ *
+ * PRIVACY: no user identity anywhere in this string — only the fixture, the
+ * probability that was called, and whether it landed. Safe to paste
+ * anywhere; there is no per-user page for it to link to (see ShareRow below,
+ * which links to the public /ledger instead).
+ */
+function buildPickShareText(
+  pick: SettledPick,
+  fav: { key: MatchResult; prob: number },
+  hit: boolean,
+  beatModel: boolean,
+): string {
+  const pickName = outcomeName(fav.key, pick.home, pick.away);
+  const lead = `I called ${pickName} for ${pick.home} v ${pick.away}.`;
+  const receipt = receiptRead(fav.prob, hit);
+  if (beatModel && pick.model !== null) {
+    const modelLine = beatModelRead(
+      { home: pick.prob_home, draw: pick.prob_draw, away: pick.prob_away },
+      { home: pick.model.prob_home, draw: pick.model.prob_draw, away: pick.model.prob_away },
+      pick.result,
+      pick.home,
+      pick.away,
+    );
+    return `${lead} ${receipt} ${modelLine}`;
+  }
+  return `${lead} ${receipt}`;
+}
+
 export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -173,12 +213,14 @@ export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
     revealing ? (n === 0 ? 'rise-in' : `rise-in rise-in-${n}`) : '';
 
   const probs = { home: pick.prob_home, draw: pick.prob_draw, away: pick.prob_away };
-  const hit = predictedPick(probs) === pick.result;
+  const fav = favoured(probs);
+  const hit = fav.key === pick.result;
   const actual = ONE_HOT[pick.result];
   const beatModel =
     pick.model !== null &&
     pick.model.brier_score !== null &&
     pick.brier_score < pick.model.brier_score;
+  const shareText = buildPickShareText(pick, fav, hit, beatModel);
 
   return (
     <li className="glass px-4 py-4">
@@ -309,6 +351,17 @@ export default function SettledPickReveal({ pick }: SettledPickRevealProps) {
               </p>
             </div>
           )}
+
+          {/* (e) the share affordance — hits and misses equally shareable
+              (audit "the verifiable boast"). Points at the public /ledger,
+              never a per-user page (privacy — see buildPickShareText above). */}
+          <div className={stage(3)}>
+            <ShareRow
+              url={`${SITE_URL}/ledger`}
+              title="Beat the model — Glass Pitch"
+              text={shareText}
+            />
+          </div>
         </div>
       </details>
     </li>

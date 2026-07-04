@@ -396,6 +396,18 @@ export function brierVerdict(brier: number): BrierVerdict {
 }
 
 /**
+ * The public track record as one shareable line, e.g. "41 of 64 calls landed
+ * so far — the full scored record, misses included." Takes plain numbers
+ * (not a query-layer type) so this stays a pure, data-source-agnostic
+ * formatter — callers on both /ledger and /board build it from the SAME
+ * `getRecordFigures()` read (src/lib/queries/recordSummary.ts), so the
+ * shared line can never drift from the number a visitor could go verify.
+ */
+export function recordShareText(count: number, hits: number): string {
+  return `${hits} of ${count} calls landed so far — the full scored record, misses included.`;
+}
+
+/**
  * The honest one-line "I beat the model" read (kick plan #4) — ONLY ever
  * called when the visitor's own Brier is strictly lower than the model's for
  * the SAME fixture (a real, scored result — never a hypothetical). Prefers

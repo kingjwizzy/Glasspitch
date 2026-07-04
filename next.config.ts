@@ -85,10 +85,17 @@ const nextConfig: NextConfig = {
   // SVGs from the local filesystem at render time (zero network calls —
   // src/lib/og.ts). The per-code flag read is dynamic, which static tracing
   // can't follow, so pin the whole flag set + fonts into every traced
-  // serverless bundle explicitly (they're ~200KB total).
+  // serverless bundle explicitly (they're ~200KB total). /ledger's OG route
+  // needs only the fonts (its subject is the aggregate record, not any one
+  // team, so it never reads a flag); /board's needs both, same as
+  // /match/[id] and /chances. Every OG route added here MUST be added to
+  // this map, or it 500s in prod serverless (the filesystem reads it makes
+  // aren't otherwise traced into the deployed bundle).
   outputFileTracingIncludes: {
     '/match/[id]/opengraph-image': ['./src/assets/og/*.ttf', './public/flags/*.svg'],
     '/chances/opengraph-image': ['./src/assets/og/*.ttf', './public/flags/*.svg'],
+    '/ledger/opengraph-image': ['./src/assets/og/*.ttf'],
+    '/board/opengraph-image': ['./src/assets/og/*.ttf', './public/flags/*.svg'],
   },
   async headers() {
     return [

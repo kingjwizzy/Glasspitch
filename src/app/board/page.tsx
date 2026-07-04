@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import SectionHeader from '@/components/SectionHeader';
+import ShareRow from '@/components/ShareRow';
 import TeamFlag from '@/components/TeamFlag';
 import EmptyStateSpot from '@/components/art/EmptyStateSpot';
 import {
@@ -9,7 +10,9 @@ import {
   getBoardData,
   type BoardSnapshotRow,
 } from '@/lib/queries/board';
-import { formatDateShort, pct } from '@/lib/format';
+import { getRecordFigures } from '@/lib/queries/recordSummary';
+import { formatDateShort, pct, recordShareText } from '@/lib/format';
+import { SITE_URL } from '@/lib/constants';
 
 // /board — the free Gameweek Board (ROADMAP.md §2 "free daily habit";
 // ARCHITECTURE.md §5 v3). PUBLIC + ISR: anon reads only, no cookies, no
@@ -87,7 +90,10 @@ function EmptyBoard() {
 }
 
 export default async function BoardPage() {
-  const { snapshotDate, rows } = await getBoardData();
+  const [{ snapshotDate, rows }, record] = await Promise.all([
+    getBoardData(),
+    getRecordFigures(),
+  ]);
   const teams = boardByTeam(rows);
   const movers = boardMovers(rows);
 
@@ -280,6 +286,18 @@ export default async function BoardPage() {
         </Link>
         , and like everything here they are analysis, not betting advice.
       </p>
+
+      {/* Share loop (RAMBO wave 2 #2) — the board itself is context (Elo
+          estimates, not a scored call), so what's worth sharing from here is
+          the actual verifiable record: the SAME getRecordFigures() read that
+          powers /ledger's own share line and OG image. */}
+      {record && record.count > 0 && (
+        <ShareRow
+          url={`${SITE_URL}/ledger`}
+          title="Glass Pitch — the scored prediction ledger"
+          text={recordShareText(record.count, record.hits)}
+        />
+      )}
     </article>
   );
 }

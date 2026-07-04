@@ -6,7 +6,11 @@ import ChancesEmpty from '@/components/chances/ChancesEmpty';
 import ChancesProvenance from '@/components/chances/ChancesProvenance';
 import TeamFlag from '@/components/TeamFlag';
 import { flagCodeForTeam } from '@/lib/flags';
-import { getChancesData, type TeamChance } from '@/lib/queries/chances';
+import {
+  getChancesData,
+  MEANINGFUL_MOVE_THRESHOLD,
+  type TeamChance,
+} from '@/lib/queries/chances';
 import { pct } from '@/lib/format';
 import { SITE_NAME, SITE_URL } from '@/lib/constants';
 
@@ -67,7 +71,7 @@ function MoveFigure({ delta }: { delta: number | null }) {
 function movers(teams: TeamChance[], limit = 6): Array<TeamChance & { delta: number }> {
   return teams
     .filter((t): t is TeamChance & { delta: number } => t.delta !== null)
-    .filter((t) => Math.abs(t.delta) >= 0.005)
+    .filter((t) => Math.abs(t.delta) >= MEANINGFUL_MOVE_THRESHOLD)
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, limit);
 }

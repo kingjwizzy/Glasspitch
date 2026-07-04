@@ -169,3 +169,24 @@ async function load(): Promise<ChancesData> {
 export async function getChancesData(): Promise<ChancesData> {
   return withTimeout(load(), 6000, EMPTY_CHANCES);
 }
+
+/** Minimum meaningful day-over-day pWin move (probability units) worth
+ *  surfacing as a "mover" — filters out simulation noise. Shared by every
+ *  movers surface (the /chances "Since yesterday" grid, the homepage's
+ *  single title-race highlight) so the bar for "worth mentioning" can never
+ *  drift between them. */
+export const MEANINGFUL_MOVE_THRESHOLD = 0.005;
+
+/** The single biggest day-over-day mover by absolute pWin change, or null
+ *  when there's no prior snapshot yet or nothing moved meaningfully — the
+ *  homepage's one-line "title race" highlight (RAMBO wave 2 #2) is rendered
+ *  only when this is non-null, so it degrades to nothing rather than an
+ *  empty/placeholder card. */
+export function biggestMover(teams: TeamChance[]): (TeamChance & { delta: number }) | null {
+  const moved = teams.filter(
+    (t): t is TeamChance & { delta: number } =>
+      t.delta !== null && Math.abs(t.delta) >= MEANINGFUL_MOVE_THRESHOLD,
+  );
+  if (moved.length === 0) return null;
+  return moved.reduce((biggest, t) => (Math.abs(t.delta) > Math.abs(biggest.delta) ? t : biggest));
+}

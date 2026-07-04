@@ -5,9 +5,11 @@ import SectionHeader from '@/components/SectionHeader';
 import LedgerTable from '@/components/ledger/LedgerTable';
 import CalibrationTable from '@/components/ledger/CalibrationTable';
 import EmptyStateSpot from '@/components/art/EmptyStateSpot';
+import ShareRow from '@/components/ShareRow';
 import { getLedgerData } from '@/lib/queries/ledger';
-import { pct } from '@/lib/format';
-import { ANALYSIS_NOT_ADVICE, SITE_NAME, THIRD_PARTY_LABEL } from '@/lib/constants';
+import { getRecordFigures } from '@/lib/queries/recordSummary';
+import { pct, recordShareText } from '@/lib/format';
+import { ANALYSIS_NOT_ADVICE, SITE_NAME, SITE_URL, THIRD_PARTY_LABEL } from '@/lib/constants';
 
 // SSR/ISR (ARCHITECTURE.md §11): re-render at most every 10 minutes so the record
 // refreshes as calls are scored, with no per-visitor work and — like every web
@@ -58,7 +60,10 @@ function Metric({
 }
 
 export default async function LedgerPage() {
-  const { summary, rows, calibration } = await getLedgerData();
+  const [{ summary, rows, calibration }, record] = await Promise.all([
+    getLedgerData(),
+    getRecordFigures(),
+  ]);
   const hasRecord = summary.count > 0;
 
   return (
@@ -145,6 +150,18 @@ export default async function LedgerPage() {
               )}
               ; every miss is counted in full.
             </p>
+            {/* Share loop (RAMBO wave 2 #2) — built from the SAME
+                getRecordFigures() read that powers this page's OG image, so
+                the shared number can never drift from what a visitor can
+                come back and verify. */}
+            {record && record.count > 0 && (
+              <ShareRow
+                className="mt-4"
+                url={`${SITE_URL}/ledger`}
+                title="Glass Pitch — the scored prediction ledger"
+                text={recordShareText(record.count, record.hits)}
+              />
+            )}
           </section>
 
           <p className="rounded-xl border border-line bg-surface px-4 py-3 text-xs leading-relaxed text-fg-dim">

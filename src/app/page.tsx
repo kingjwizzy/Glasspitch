@@ -14,11 +14,12 @@ import RecentCalls from '@/components/home/RecentCalls';
 import RecordBand from '@/components/home/RecordBand';
 import GoldenBootRace from '@/components/home/GoldenBootRace';
 import SignupCard from '@/components/home/SignupCard';
+import TitleRaceMover from '@/components/home/TitleRaceMover';
 import ShareRow from '@/components/ShareRow';
 import { ArrowRightIcon } from '@/components/icons';
 import { getHomepageData } from '@/lib/queries/homepage';
 import { getGoldenBootTop5 } from '@/lib/queries/goldenBoot';
-import { getChancesData } from '@/lib/queries/chances';
+import { biggestMover, getChancesData } from '@/lib/queries/chances';
 import { formatFullDate, formatTimeUtc, updatedStamp, utcDateKey } from '@/lib/format';
 import { SITE_NAME, SITE_URL } from '@/lib/constants';
 
@@ -82,6 +83,7 @@ export default async function HomePage() {
     ...upcoming,
   ];
   const streamHasToday = stream.some((f) => utcDateKey(f.kickoff_utc) === todayKey);
+  const titleRaceMover = biggestMover(chances.teams);
 
   // "Also today" — one factual mono summary, counts computed server-side.
   const nextToday = upcoming.find((f) => utcDateKey(f.kickoff_utc) === todayKey);
@@ -159,6 +161,11 @@ export default async function HomePage() {
           href="/chances"
           linkLabel="The full picture"
         />
+        {titleRaceMover && (
+          <div className="mb-4">
+            <TitleRaceMover mover={titleRaceMover} />
+          </div>
+        )}
         {chances.teams.length > 0 ? (
           <>
             <ChancesCloud teams={chances.teams} />
