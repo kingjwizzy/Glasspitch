@@ -20,9 +20,10 @@ import type { FixtureView } from '@/lib/queries/homepage';
 // kickoff line and the live score share one slot so the card morphs
 // upcoming → live with zero layout shift.
 
-// Favoured-outcome tint, applied ONLY at display size (the 28/40px trio):
-// --home and --away pass AA there; --draw (#8A938F) stays --text because the
-// grey only passes contrast at display sizes and tinting it buys nothing.
+// Favoured-outcome tint, applied ONLY at display size (the --text-stat/
+// --text-stat-lg trio, 32/40px): --home and --away pass AA there; --draw
+// (#8A938F) stays --text because the grey only passes contrast at display
+// sizes and tinting it buys nothing.
 const TINT: Record<MatchResult, string> = {
   home: 'text-home',
   draw: 'text-fg',
@@ -65,7 +66,7 @@ export default function FeaturedMatch({
       className="glass-raised card-interactive block rounded-2xl p-5 lg:p-8"
     >
       {/* Competition line. */}
-      <p className="text-[13px] text-fg-dim">{fixture.league}</p>
+      <p className="text-small text-fg-dim">{fixture.league}</p>
 
       {/* Teams — plain text first (§13); flags are decorative (aria-hidden). */}
       <h2 className="mt-3 font-display text-2xl font-semibold tracking-tight text-fg lg:text-[32px] lg:leading-tight">
@@ -92,7 +93,7 @@ export default function FeaturedMatch({
           <>
             <LivePill />
             {hasLiveScore && (
-              <span className="font-mono text-[32px] font-medium leading-none text-fg">
+              <span className="font-mono text-stat font-medium text-fg">
                 {scoreLine(fixture.final_home_goals!, fixture.final_away_goals!)}
               </span>
             )}
@@ -112,7 +113,7 @@ export default function FeaturedMatch({
             {OUTCOMES.map((o) => (
               <div key={o.key} className="flex min-w-0 flex-col gap-1.5">
                 <dd
-                  className={`order-2 font-mono text-[28px] font-medium leading-none lg:text-[40px] ${
+                  className={`order-2 font-mono text-stat font-medium lg:text-stat-lg ${
                     fav.key === o.key ? TINT[o.key] : 'text-fg'
                   }`}
                 >
@@ -141,7 +142,7 @@ export default function FeaturedMatch({
             className="mt-4"
           />
 
-          <p className="mt-4 text-[13px] text-fg-dim">
+          <p className="mt-4 text-small text-fg-dim">
             predicted score{' '}
             <span className="ml-1 font-mono text-xl font-medium text-fg">
               {scoreLine(pred.predicted_home_goals, pred.predicted_away_goals)}
@@ -149,7 +150,7 @@ export default function FeaturedMatch({
           </p>
 
           {/* Provenance microline — every claim checkable (W4 spec §1). */}
-          <p className="mt-4 font-mono text-[11px] leading-4 text-fg-dim">
+          <p className="mt-4 font-mono text-micro text-fg-dim">
             third-party model · published {formatDateTimeShort(pred.published_at)} ·{' '}
             {isLocked(pred.status) ? 'locked at kickoff' : 'locks at kickoff'} · scored
             either way

@@ -4,8 +4,8 @@ import { ArrowRightIcon } from './icons';
 interface SectionHeaderProps {
   id: string;
   title: string;
-  /** Optional one-line description under the title — capped at 38ch,
-   *  --text-dim (W4 spec: "hierarchy without boxes"). */
+  /** Optional one-line description under the title — capped at the ~46ch
+   *  "lede" measure, --text-dim (W4 spec: "hierarchy without boxes"). */
   description?: string;
   /** Optional green arrow-link action, e.g. "Full record →". */
   href?: string;
@@ -43,7 +43,12 @@ export default function SectionHeader({
         )}
       </div>
       {description && (
-        <p className="mt-1 max-w-[38ch] text-sm text-fg-dim">{description}</p>
+        // ~46ch "lede" measure (RAMBO wave 3 #10b) — the same width used for
+        // the hero subhead and RecordBand's headline paragraph, widened
+        // slightly from the old ad-hoc 38ch so two-clause descriptions stop
+        // clipping. Kept as a literal: no new width token is authorised this
+        // batch (type-scale tokens only).
+        <p className="mt-1 max-w-[46ch] text-sm text-fg-dim">{description}</p>
       )}
     </div>
   );

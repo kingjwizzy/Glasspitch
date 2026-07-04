@@ -53,7 +53,7 @@ function Metric({
 }) {
   return (
     <div className="rounded-2xl border border-line bg-surface-2 p-4">
-      <p className="font-mono text-3xl font-medium text-fg">{value}</p>
+      <p className="font-mono text-stat font-medium text-fg">{value}</p>
       <p className="mt-1 text-sm font-medium text-fg">{label}</p>
       <p className="mt-1 text-xs leading-relaxed text-fg-dim">{caption}</p>
     </div>
@@ -68,7 +68,10 @@ export default async function LedgerPage() {
   const hasRecord = summary.count > 0;
 
   return (
-    <article className="space-y-8">
+    // Vertical rhythm (RAMBO wave 3 #10a) — same 48px → 64px cadence as
+    // page.tsx and match/[id]/page.tsx, so the flagship pages breathe
+    // identically.
+    <article className="space-y-12 lg:space-y-16">
       <header>
         <h1 className="font-display text-2xl font-semibold tracking-tight text-fg">
           The ledger

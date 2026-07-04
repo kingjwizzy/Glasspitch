@@ -210,7 +210,9 @@ export default async function MatchPage({ params }: MatchPageProps) {
   ]);
 
   return (
-    <article className="space-y-8">
+    // Vertical rhythm (RAMBO wave 3 #10a) — same 48px → 64px cadence as
+    // page.tsx and ledger/page.tsx, so the flagship pages breathe identically.
+    <article className="space-y-12 lg:space-y-16">
       <script
         type="application/ld+json"
         // JSON-LD is data for crawlers, not executable app JS — keeps the SEO

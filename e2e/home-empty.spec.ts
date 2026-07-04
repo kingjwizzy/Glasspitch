@@ -70,19 +70,20 @@ test('/ (empty) renders honest structural empty states — never fake data', asy
   expect(await band.innerText()).not.toMatch(/\d\.\d{3}/);
 });
 
-test('/ (empty) keeps the page skeleton: 8 sections, one sign-up end-cap, disclaimer', async ({
+test('/ (empty) keeps the page skeleton: 11 sections, one sign-up end-cap, disclaimer', async ({
   page,
 }) => {
   await page.goto(`${EMPTY_HOME_URL}/`, { waitUntil: 'load' });
 
   await expectLandmarksAndCompliance(page);
-  // 10 = the W4 seven + the W6 World Cup chances section + the audit-fix
-  // "Beat the model" and "Want more depth?" premium-mention sections. (The
-  // chances slot has no preview hatch — it renders from the REAL
-  // `tournament_chances` table in whichever state it holds; see the
-  // dedicated chances-slot test below. Every section itself is always
-  // present regardless of data state, so the count is state-independent.)
-  await expect(page.locator('section[aria-labelledby]')).toHaveCount(10);
+  // 11 = the W4 seven + the W6 World Cup chances section + the audit-fix
+  // "Beat the model" and "Want more depth?" premium-mention sections + the
+  // UI-overhaul "How it works" strip. (The chances slot has no preview hatch
+  // — it renders from the REAL `tournament_chances` table in whichever state
+  // it holds; see the dedicated chances-slot test below. Every section itself
+  // is always present regardless of data state, so the count is
+  // state-independent.)
+  await expect(page.locator('section[aria-labelledby]')).toHaveCount(11);
   // WC-window SEO (audit #10): the h1 is temporarily World-Cup-specific while
   // the tournament is live/imminent — revert to "Football analysis you can
   // check" once it reverts in source (see src/app/page.tsx's HOME_TITLE note).

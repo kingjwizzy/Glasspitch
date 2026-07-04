@@ -125,7 +125,7 @@ export default function ProbabilityBar({
       {variant === 'row' && (
         <p
           aria-hidden="true"
-          className="mt-1 font-mono text-[11px] leading-4 text-fg-dim"
+          className="mt-1 font-mono text-micro text-fg-dim"
         >
           H {pctFigure(home)} · D {pctFigure(draw)} · A {pctFigure(away)}
         </p>

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRightIcon, CheckIcon, CrossIcon } from '@/components/icons';
 import LedgerPipeline from '@/components/home/LedgerPipeline';
+import WorkedExample from '@/components/home/WorkedExample';
 import { metric3 } from '@/lib/format';
 import type { RecentCallView, RecordView } from '@/lib/queries/homepage';
 
@@ -8,9 +9,11 @@ import type { RecentCallView, RecordView } from '@/lib/queries/homepage';
 // it on mobile, so the moat is visible in the first viewport: scored counts,
 // mean Brier, the last ~10 ✓/✗ receipts, and the immutability sentence.
 //
-// EMPTY STATE (young ledger): never fake data — ghost-outline chips and a tiny
-// static pipeline (lock → whistle → scored) with plain copy. The pipeline is
-// decorative (aria-hidden); the sentence carries the meaning.
+// EMPTY STATE (young ledger, RAMBO wave 3 #3a): never fake data — a static
+// pipeline (lock → whistle → scored) plus a clearly-labelled worked example
+// that teaches the mechanism instead of rendering blank em-dashes at exactly
+// the moment first-visit traffic peaks. The pipeline is decorative
+// (aria-hidden); the worked example and sentence carry the meaning.
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
@@ -26,15 +29,7 @@ function EmptyRail() {
     <div className="glass p-4">
       {/* lock → whistle → scored, fully static. */}
       <LedgerPipeline />
-      {/* Ghost-outline chips — the shape of the record to come, never fake data. */}
-      <div className="mt-3 flex gap-2" aria-hidden="true">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <span
-            key={i}
-            className="h-7 w-7 shrink-0 rounded-lg border border-dashed border-line"
-          />
-        ))}
-      </div>
+      <WorkedExample className="mt-3" />
       <p className="mt-3 text-sm text-fg-dim">
         First calls lock at kickoff and get scored here — misses included.
       </p>

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRightIcon } from '@/components/icons';
 import LedgerPipeline from '@/components/home/LedgerPipeline';
+import WorkedExample from '@/components/home/WorkedExample';
 import { metric3 } from '@/lib/format';
 import type { RecordView } from '@/lib/queries/homepage';
 
@@ -23,8 +24,8 @@ function trackPct(value: number): number {
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div>
-      <p className="font-mono text-[32px] font-medium leading-none text-fg">{value}</p>
-      <p className="mt-1.5 text-[13px] text-fg-dim">{label}</p>
+      <p className="font-mono text-stat font-medium text-fg">{value}</p>
+      <p className="mt-1.5 text-small text-fg-dim">{label}</p>
     </div>
   );
 }
@@ -43,7 +44,11 @@ export default function RecordBand({ record }: { record: RecordView }) {
           >
             The record so far
           </h2>
-          <p className="mt-1.5 max-w-[38ch] text-sm text-fg-dim">
+          {/* ~46ch "lede" measure (RAMBO wave 3 #10b) — same width as the
+              hero subhead and SectionHeader's description, kept as a literal
+              since no new width token is authorised this batch (type-scale
+              tokens only). */}
+          <p className="mt-1.5 max-w-[46ch] text-sm text-fg-dim">
             Would guessing do better? Compare us with the always-guessing
             baseline — misses included.
           </p>
@@ -66,7 +71,7 @@ export default function RecordBand({ record }: { record: RecordView }) {
                 value={record.meanLogLoss !== null ? metric3(record.meanLogLoss) : '—'}
                 label="mean log loss"
               />
-              <p className="w-full text-[13px] text-fg-dim">
+              <p className="w-full text-small text-fg-dim">
                 across <span className="font-mono">{record.count}</span> scored{' '}
                 {record.count === 1 ? 'call' : 'calls'} — small samples are noisy.
               </p>
@@ -86,7 +91,7 @@ export default function RecordBand({ record }: { record: RecordView }) {
                   style={{ left: `${trackPct(BASELINE)}%` }}
                 />
               </div>
-              <dl className="mt-3 space-y-1 font-mono text-[11px] leading-4 text-fg-dim">
+              <dl className="mt-3 space-y-1 font-mono text-micro text-fg-dim">
                 <div className="flex items-center gap-2">
                   <dt className="flex items-center gap-2">
                     <span
@@ -108,16 +113,20 @@ export default function RecordBand({ record }: { record: RecordView }) {
                   <dd>0.667</dd>
                 </div>
               </dl>
-              <p className="mt-3 text-[13px] leading-relaxed text-fg-dim">
+              <p className="mt-3 text-small text-fg-dim">
                 Lower is better. When we say 70%, it should happen about 70% of the
                 time — the ledger shows whether it does.
               </p>
             </div>
           </>
         ) : (
-          /* Young ledger: structural honesty, never invented numbers. */
+          /* Young ledger (RAMBO wave 3 #3a): structural honesty, never
+             invented numbers — a clearly-labelled worked example teaches the
+             mechanism instead of an em-dash (DESIGN.md §2: must never be
+             presented as real data). */
           <div className="lg:col-span-8">
             <LedgerPipeline />
+            <WorkedExample className="mt-4" />
             <p className="mt-3 max-w-prose text-sm text-fg-dim">
               The record opens after the first final whistle — Brier score, log loss
               and calibration, misses included. Every prediction is locked at kickoff

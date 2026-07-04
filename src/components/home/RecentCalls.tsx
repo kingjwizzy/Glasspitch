@@ -2,6 +2,7 @@ import Link from 'next/link';
 import ResultBadge from '@/components/ResultBadge';
 import ProbabilityBar from '@/components/ProbabilityBar';
 import LedgerPipeline from '@/components/home/LedgerPipeline';
+import WorkedExample from '@/components/home/WorkedExample';
 import EmptyStateSpot from '@/components/art/EmptyStateSpot';
 import {
   formatDateTimeShort,
@@ -99,16 +100,22 @@ function ReceiptRow({ c }: { c: RecentCallView }) {
 
 export default function RecentCalls({ calls }: { calls: RecentCallView[] }) {
   if (calls.length === 0) {
+    // RAMBO wave 3 #3a: never a blank receipt strip — a clearly-labelled
+    // worked example sits alongside the honest "opens after the first final
+    // whistle" copy, teaching the receipt format before any real one exists.
     return (
-      <div className="glass flex items-center gap-5 p-5">
-        {/* Receipt spot illustration (W6 visual pack) — decorative. */}
-        <EmptyStateSpot variant="receipts" className="h-16 w-auto shrink-0" />
-        <div className="min-w-0">
-          <LedgerPipeline />
-          <p className="mt-3 text-sm text-fg-dim">
-            The record opens after the first final whistle — misses included.
-          </p>
+      <div className="glass p-5">
+        <div className="flex items-center gap-5">
+          {/* Receipt spot illustration (W6 visual pack) — decorative. */}
+          <EmptyStateSpot variant="receipts" className="h-16 w-auto shrink-0" />
+          <div className="min-w-0">
+            <LedgerPipeline />
+            <p className="mt-3 text-sm text-fg-dim">
+              The record opens after the first final whistle — misses included.
+            </p>
+          </div>
         </div>
+        <WorkedExample className="mt-4" />
       </div>
     );
   }

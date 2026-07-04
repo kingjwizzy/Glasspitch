@@ -39,7 +39,7 @@ function SideChip({ side }: { side: 'home' | 'away' }) {
 function StatusGutter({ f }: { f: FixtureRowView }) {
   if (f.status === 'live') {
     return (
-      <span className="flex items-center gap-1.5 text-[13px] font-medium text-live">
+      <span className="flex items-center gap-1.5 text-small font-medium text-live">
         <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-live opacity-60" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-live" />
@@ -51,22 +51,22 @@ function StatusGutter({ f }: { f: FixtureRowView }) {
   if (f.status === 'finished') {
     return (
       <span className="flex flex-col">
-        <span className="text-[11px] leading-tight text-fg-dim">Full time</span>
-        <time dateTime={f.kickoff_utc} className="mt-0.5 font-mono text-[11px] text-fg-dim">
+        <span className="text-micro text-fg-dim">Full time</span>
+        <time dateTime={f.kickoff_utc} className="mt-0.5 font-mono text-micro text-fg-dim">
           {formatDateShort(f.kickoff_utc)}
         </time>
       </span>
     );
   }
   if (f.status === 'postponed') {
-    return <span className="text-[11px] leading-tight text-fg-dim">Postponed</span>;
+    return <span className="text-micro text-fg-dim">Postponed</span>;
   }
   return (
     <span className="flex flex-col">
       <time dateTime={f.kickoff_utc} className="font-mono text-sm text-fg">
         {formatTimeUtc(f.kickoff_utc)}
       </time>
-      <span className="text-[11px] text-fg-dim">UTC</span>
+      <span className="text-micro text-fg-dim">UTC</span>
     </span>
   );
 }
@@ -96,19 +96,19 @@ export default function FixtureRow({ fixture: f }: { fixture: FixtureRowView }) 
         <div className="grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-x-3">
           <StatusGutter f={f} />
           <div className="min-w-0 space-y-1">
-            <p className={`flex items-center gap-2 truncate text-[15px] ${homeCls}`}>
+            <p className={`flex items-center gap-2 truncate text-h3 ${homeCls}`}>
               <SideChip side="home" />
               <TeamFlag name={f.home} />
               {f.home}
             </p>
-            <p className={`flex items-center gap-2 truncate text-[15px] ${awayCls}`}>
+            <p className={`flex items-center gap-2 truncate text-h3 ${awayCls}`}>
               <SideChip side="away" />
               <TeamFlag name={f.away} />
               {f.away}
             </p>
           </div>
           {/* Reserved score slot — filled once there is a score. */}
-          <div className="w-5 space-y-1 text-right font-mono text-[15px] font-medium text-fg">
+          <div className="w-5 space-y-1 text-right font-mono text-h3 font-medium text-fg">
             {hasScore ? (
               <>
                 <p className={result === 'away' ? 'text-fg-dim' : ''}>

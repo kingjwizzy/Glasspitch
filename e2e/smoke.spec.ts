@@ -58,12 +58,13 @@ test('/ has correct landmark structure and data-state-independent semantics', as
 
   // Heading order: h1 is present and unique (the W4 one-line kicker).
   await expect(page.locator('h1')).toHaveCount(1);
-  // The TEN named sections of the W4 recomposition + W6/audit-fix additions
-  // (hero band, World Cup chances circles, matchday stream, watching, beat-
-  // the-model, receipts, Golden Boot race, record band, the one quiet
-  // premium mention, sign-up end-cap) each get a visible or sr-only heading.
+  // The ELEVEN named sections of the W4 recomposition + W6/audit-fix + UI-
+  // overhaul additions (hero band, how it works, World Cup chances circles,
+  // matchday stream, watching, beat-the-model, receipts, Golden Boot race,
+  // record band, the one quiet premium mention, sign-up end-cap) each get a
+  // visible or sr-only heading.
   const namedSections = page.locator('section[aria-labelledby]');
-  await expect(namedSections).toHaveCount(10);
+  await expect(namedSections).toHaveCount(11);
 
   // ProbabilityBar uses role=img with a descriptive aria-label naming all three
   // outcomes (DESIGN.md §2: colour is never the sole signal). With preview data

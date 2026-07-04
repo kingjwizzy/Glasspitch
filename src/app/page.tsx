@@ -7,6 +7,7 @@ import ChancesCloud from '@/components/chances/ChancesCloud';
 import ChancesEmpty from '@/components/chances/ChancesEmpty';
 import ChancesProvenance from '@/components/chances/ChancesProvenance';
 import FeaturedMatch from '@/components/home/FeaturedMatch';
+import HowItWorks from '@/components/home/HowItWorks';
 import ProofRail from '@/components/home/ProofRail';
 import UpcomingFixtures from '@/components/home/UpcomingFixtures';
 import WhatWeAreWatching from '@/components/home/WhatWeAreWatching';
@@ -96,7 +97,11 @@ export default async function HomePage() {
   const alsoToday = alsoTodayParts.join(' · ');
 
   return (
-    <div className="space-y-10 lg:space-y-24">
+    // Vertical rhythm (RAMBO wave 3 #10a): an 8pt-anchored, gentler step
+    // (48px → 64px) replacing the old 40px → 96px chasm — the same cadence
+    // as ledger/page.tsx and match/[id]/page.tsx so the flagship pages
+    // breathe identically.
+    <div className="space-y-12 lg:space-y-16">
       {/* ── Matchday hero band: featured match + ledger proof rail (W4 §1).
           The page's ONE floodlight pool sits under this band. ────────────── */}
       <section aria-labelledby="home-kicker" className="floodlight">
@@ -107,16 +112,23 @@ export default async function HomePage() {
         <div className="rise-in">
           <h1
             id="home-kicker"
-            className="font-display text-[22px] font-semibold tracking-tight text-fg lg:text-[28px]"
+            className="font-display text-display font-semibold tracking-tight text-fg lg:text-[28px]"
           >
             {/* WC-window h1 (see HOME_TITLE note above) — revert to "Football
                 analysis you can check" once the tournament ends in August. */}
             World Cup 2026 predictions you can check
           </h1>
-          <p className="mt-1 max-w-[38ch] text-fg-dim">
-            Every call locked at kickoff, scored either way.
+          {/* Calm hero subhead (RAMBO wave 3 #3b): names the category and
+              carries the "not tips" compliance framing as a brand line, not a
+              scary banner — --fg-dim, no box, no alarm colour. ~46ch "lede"
+              measure (matches SectionHeader/RecordBand's own lede width; kept
+              as a literal here since no new width token is authorised this
+              batch — type-scale tokens only). */}
+          <p className="mt-1.5 max-w-[46ch] text-fg-dim">
+            Free World Cup match analysis — probabilities, not tips. Every
+            call locked at kickoff, scored either way.
           </p>
-          <p className="mt-2 font-mono text-[11px] leading-4 text-fg-dim">
+          <p className="mt-2 font-mono text-micro text-fg-dim">
             {updatedStamp(renderedAt)}
           </p>
         </div>
@@ -149,6 +161,13 @@ export default async function HomePage() {
           Below the whole hero band so an empty div never separates headline
           and match (W4 §1). */}
       <AdSlot slot="home-top" />
+
+      {/* ── How it works — the honest-loop strip (RAMBO wave 3 #7b),
+          promoted from empty-state-only decoration to an always-present,
+          labelled explanation. Fills the gap the empty ad slot leaves. ───── */}
+      <section aria-labelledby="how-it-works-heading">
+        <HowItWorks />
+      </section>
 
       {/* ── World Cup chances — the owner's flagship circles, full-width
           directly under the hero band (W6; ROADMAP.md §4 item 7). Honest
